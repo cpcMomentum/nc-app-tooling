@@ -182,6 +182,51 @@ function unescapeQuoted(lit, quote) {
 	return lit.replace(new RegExp(`\\\\([${quote}\\\\])`, 'g'), '$1')
 }
 
+/**
+ * Liest ab `pos` ein String-Literal und alle per `.` angehaengten weiteren
+ * Literale, und gibt den zusammengesetzten Wert zurueck.
+ *
+ * PHP setzt lange Meldungen ueber mehrere Zeilen zusammen:
+ *
+ *     $this->l10n->t(
+ *         'Erster Teil. '
+ *         . 'Zweiter Teil.',
+ *         [$wert],
+ *     )
+ *
+ * Der Katalogschluessel ist der GANZE Satz. Wer nur das erste Literal liest,
+ * traegt ein Fragment ein, das nie nachgeschlagen wird — der echte Schluessel
+ * fehlt weiter, und die Meldung bleibt unuebersetzt. Genau so entstanden in
+ * projektwerk fuenf unbrauchbare Eintraege, erkennbar am Leerzeichen am Ende.
+ *
+ * @return {{value: string, end: number}|null}
+ */
+function readConcatenatedLiteral(code, pos) {
+	const parts = []
+	let i = pos
+	for (;;) {
+		while (i < code.length && /\s/.test(code[i])) i++
+		const quote = code[i]
+		if (quote !== "'" && quote !== '"') break
+		let j = i + 1
+		let lit = ''
+		while (j < code.length) {
+			if (code[j] === '\\') { lit += code[j] + code[j + 1]; j += 2; continue }
+			if (code[j] === quote) break
+			lit += code[j]; j++
+		}
+		if (j >= code.length) return null // unabgeschlossenes Literal
+		parts.push(unescapeQuoted(lit, quote))
+		i = j + 1
+		// Fortsetzung? Nur ein `.` zwischen zwei Literalen zaehlt.
+		let k = i
+		while (k < code.length && /\s/.test(code[k])) k++
+		if (code[k] !== '.') break
+		i = k + 1
+	}
+	return parts.length ? { value: parts.join(''), end: i } : null
+}
+
 function extractCanonicalKeys() {
 	const keys = new Set()
 	for (const base of FRONTEND_DIRS) {
@@ -197,10 +242,17 @@ function extractCanonicalKeys() {
 	for (const base of BACKEND_DIRS) {
 		for (const file of filesUnder(join(ROOT, base), BACKEND_EXT)) {
 			const code = readFileSync(file, 'utf8')
-			for (const m of code.matchAll(T_BACKEND_SQ)) keys.add(unescapeQuoted(m[1], "'"))
-			for (const m of code.matchAll(T_BACKEND_DQ)) keys.add(unescapeQuoted(m[1], '"'))
-			for (const m of code.matchAll(N_BACKEND)) {
-				keys.add(pluralKey(unescapeQuoted(m[1], "'"), unescapeQuoted(m[2], "'")))
+			// ->t( und ->n( zeichengenau lesen statt per Regex: nur so kommen
+			// ueber mehrere Zeilen zusammengesetzte Meldungen vollstaendig an.
+			for (const m of code.matchAll(/->(t|n)\(/g)) {
+				const erst = readConcatenatedLiteral(code, m.index + m[0].length)
+				if (!erst) continue
+				if (m[1] === 't') { keys.add(erst.value); continue }
+				let i = erst.end
+				while (i < code.length && /\s/.test(code[i])) i++
+				if (code[i] !== ',') continue
+				const zweit = readConcatenatedLiteral(code, i + 1)
+				if (zweit) keys.add(pluralKey(erst.value, zweit.value))
 			}
 		}
 	}
