@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-Commit-Pruefungen der App-Flotte.
+#
+# Die Logik liegt in nc-app-tooling, damit sie nicht wieder fuenffach
+# auseinanderlaeuft (contractmanager#339). Diese Datei ist nur der Aufruf und
+# soll in allen Apps identisch sein — Aenderungen gehoeren ins Werkzeug.
+#
+#   1. Merge-Konfliktmarker      3. l10n-Katalog-Konsistenz
+#   2. Zugangsschluessel          4. OCP-only
+#
+# Umgehung (nicht empfohlen): git commit --no-verify
+
+set -euo pipefail
+
+if ! command -v node >/dev/null 2>&1; then
+    printf '\033[0;33m[Pre-Commit] uebersprungen (node nicht gefunden)\033[0m\n'
+    exit 0
+fi
+
+# Bewusst blockierend statt ueberspringend: ohne das Werkzeug liefe auch die
+# Secret-Pruefung nicht mehr, und die lief frueher ohne jede Abhaengigkeit. Ein
+# stillschweigend uebersprungener Schutz ist genau das Muster, das wir hier
+# abschaffen. Behebbar in zehn Sekunden.
+if [ ! -x node_modules/.bin/nc-pre-commit ]; then
+    printf '\033[0;31m[Pre-Commit] BLOCKED — nc-pre-commit fehlt.\033[0m\n\n'
+    printf 'Die Pruefungen kommen aus nc-app-tooling und liegen erst nach\n'
+    printf 'einem Install vor:\n\n    npm install\n\n'
+    printf 'Bewusst blockierend: sonst waere auch die Secret-Pruefung stumm.\n'
+    exit 1
+fi
+
+exec node_modules/.bin/nc-pre-commit
