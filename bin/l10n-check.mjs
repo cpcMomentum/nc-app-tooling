@@ -147,6 +147,36 @@ function sourceValue(key) {
 /** Tiefer Vergleich — Pluralwerte sind Arrays, `!==` wuerde immer anschlagen. */
 const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 
+// Dynamische Uebersetzung: t('<app>', variable) statt t('<app>', 'Literal').
+// rechnungswerk uebersetzt so seine Einheiten- und Statuslabel ueber
+// Konstanten-Maps: t('rechnungswerk', UNIT_CODE_LABELS[code]).
+//
+// Fuer solche Aufrufe kann kein Regex sagen, welcher Schluessel gemeint ist.
+// Damit ist "tot" nicht mehr beweisbar — ein Katalogeintrag kann sehr wohl
+// benutzt sein. Wo das vorkommt, wird aus dem harten Befund ein Hinweis, und
+// --fix loescht nichts mehr. Fehlende Schluessel bleiben blockierend: die sind
+// aus einem literalen Aufruf beweisbar.
+const DYN_FRONTEND = new RegExp(`\\b[tn]\\(\\s*'${esc(APP_ID)}'\\s*,\\s*[^'\\s)]`, 'g')
+const DYN_BACKEND = /->[tn]\(\s*[^'"\s)]/g
+
+function findDynamicCalls() {
+	const hits = []
+	const scan = (dirs, ext, re, skipTests) => {
+		for (const base of dirs) {
+			for (const file of filesUnder(join(ROOT, base), ext)) {
+				if (skipTests && IS_TEST.test(file)) continue
+				const code = readFileSync(file, 'utf8')
+				for (const m of code.matchAll(re)) {
+					hits.push(`${file.slice(ROOT.length + 1)}: ${m[0].trim()}…`)
+				}
+			}
+		}
+	}
+	scan(FRONTEND_DIRS, FRONTEND_EXT, DYN_FRONTEND, true)
+	scan(BACKEND_DIRS, BACKEND_EXT, DYN_BACKEND, false)
+	return hits
+}
+
 /** Escapes eines single-/double-quoted PHP/JS-Literals aufloesen. */
 function unescapeQuoted(lit, quote) {
 	return lit.replace(new RegExp(`\\\\([${quote}\\\\])`, 'g'), '$1')
@@ -216,6 +246,7 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x))
 
 function main() {
 	const canonical = extractCanonicalKeys()
+	const dynamic = findDynamicCalls()
 	const problems = []
 	const info = []
 
@@ -248,8 +279,10 @@ function main() {
 			problems.push(`${lang}: ${missing.length} Key(s) ${label} (z.B. ${JSON.stringify(missing[0])})`)
 		}
 		if (orphan.length) {
-			problems.push(`${lang}: ${orphan.length} tote(r) Key(s) (im Katalog, nicht im Code) `
-				+ `(z.B. ${JSON.stringify(orphan[0])})`)
+			const msg = `${lang}: ${orphan.length} Key(s) im Katalog, aber nicht im Code `
+				+ `(z.B. ${JSON.stringify(orphan[0])})`
+			if (dynamic.length) info.push(`${msg} — nicht beweisbar tot, siehe unten`)
+			else problems.push(msg)
 		}
 		// (d) Hinweis, nicht blockierend: noch unuebersetzt
 		if (lang !== SOURCE_LANG) {
@@ -264,9 +297,15 @@ function main() {
 	console.log(dim(`${APP_ID}: ${canonical.size} eindeutige Keys aus src/, lib/, templates/, appinfo/ `
 		+ `— Sprachen: ${LANGS.join(', ')}`))
 
-	if (FIX) return applyFix(canonical, catalogs)
+	if (FIX) return applyFix(canonical, catalogs, dynamic)
 
 	for (const i of info) console.log(yellow('  ⚐ ' + i))
+	if (dynamic.length) {
+		console.log(yellow(`  ⚐ ${dynamic.length} dynamische(r) Aufruf(e) — welcher Schluessel gemeint ist,`
+			+ ' laesst sich nicht ablesen. "Tot" ist hier nicht beweisbar und blockiert nicht.'))
+		for (const d of dynamic.slice(0, 3)) console.log(dim(`      ${d}`))
+		if (dynamic.length > 3) console.log(dim(`      … und ${dynamic.length - 3} weitere`))
+	}
 
 	if (!problems.length) {
 		console.log(green('✓ l10n-Kataloge konsistent — keine Drift.'))
@@ -283,14 +322,23 @@ function main() {
 
 // --- 5. Fix: Kataloge aus Code regenerieren, vorhandene Werte erhalten -------
 
-function applyFix(canonical, catalogs) {
+function applyFix(canonical, catalogs, dynamic) {
 	const canonicalList = [...canonical]
 	let changed = 0
+
+	// Bei dynamischen Aufrufen wird NICHTS geloescht: ein Schluessel, der im Code
+	// nicht als Literal steht, kann trotzdem ueber eine Variable benutzt werden.
+	// Loeschen hiesse, lebende Uebersetzungen wegzuwerfen — in rechnungswerk
+	// waeren das die Einheiten- und Statuslabel gewesen.
+	const keepAll = dynamic.length > 0
+	if (keepAll) {
+		console.log(yellow(`  ⚐ ${dynamic.length} dynamische(r) Aufruf(e): es wird nur ergaenzt, nichts entfernt.`))
+	}
 
 	for (const lang of LANGS) {
 		const { js, json } = catalogs[lang]
 		const existing = json.translations
-		const existingOrder = Object.keys(existing).filter((k) => canonical.has(k))
+		const existingOrder = Object.keys(existing).filter((k) => keepAll || canonical.has(k))
 		const newKeys = canonicalList.filter((k) => !(k in existing))
 		const orderedKeys = [...existingOrder, ...newKeys]
 
@@ -310,7 +358,7 @@ function applyFix(canonical, catalogs) {
 		writeJs(lang, map, js.plural || json.pluralForm)
 		writeJson(lang, map, json.pluralForm || js.plural)
 
-		const removed = Object.keys(existing).filter((k) => !canonical.has(k)).length
+		const removed = keepAll ? 0 : Object.keys(existing).filter((k) => !canonical.has(k)).length
 		console.log(`  ${lang}: ${green(`+${newKeys.length}`)} neu, ${red(`-${removed}`)} tot, ${orderedKeys.length} gesamt`)
 	}
 
