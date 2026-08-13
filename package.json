@@ -1,6 +1,6 @@
 {
     "name": "nc-app-tooling",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "description": "Geteilte Entwicklungswerkzeuge der Nextcloud-App-Flotte (cpcMomentum)",
     "type": "module",
     "bin": {
