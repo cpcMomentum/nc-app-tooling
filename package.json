@@ -1,0 +1,21 @@
+{
+    "name": "nc-app-tooling",
+    "version": "1.0.0",
+    "description": "Geteilte Entwicklungswerkzeuge der Nextcloud-App-Flotte (cpcMomentum)",
+    "type": "module",
+    "bin": {
+        "nc-l10n-check": "bin/l10n-check.mjs"
+    },
+    "files": [
+        "bin"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/cpcMomentum/nc-app-tooling.git"
+    },
+    "license": "AGPL-3.0-or-later",
+    "author": "Axel Deffner",
+    "engines": {
+        "node": ">=20"
+    }
+}
