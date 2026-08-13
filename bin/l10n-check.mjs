@@ -294,6 +294,26 @@ function main() {
 		}
 	}
 
+	// (e) Sprachen untereinander: gleicher Schluesselsatz.
+	//
+	// Die Pruefungen (a) bis (d) laufen je Sprache und koennen das nicht sehen:
+	// steht ein Schluessel nur in de und nicht in en, ist er fuer de weder
+	// fehlend noch tot, und fuer en fehlt er auch nicht, weil er nicht im Code
+	// steht. Beide Seiten melden gruen, der Katalog ist trotzdem schief.
+	// Genau so lagen in vinarium drei veraltete Pluralschluessel nur noch in de.
+	const refKeys = new Set(Object.keys(catalogs[SOURCE_LANG].json.translations))
+	for (const lang of LANGS) {
+		if (lang === SOURCE_LANG) continue
+		const keys = new Set(Object.keys(catalogs[lang].json.translations))
+		const fehlt = diff(refKeys, keys)
+		const zuviel = diff(keys, refKeys)
+		if (fehlt.length || zuviel.length) {
+			problems.push(`${lang}: Schluesselsatz weicht von ${SOURCE_LANG} ab `
+				+ `(fehlen: ${fehlt.length}, zusaetzlich: ${zuviel.length}`
+				+ `${fehlt.length ? `, z.B. ${JSON.stringify(fehlt[0])}` : ''})`)
+		}
+	}
+
 	console.log(dim(`${APP_ID}: ${canonical.size} eindeutige Keys aus src/, lib/, templates/, appinfo/ `
 		+ `— Sprachen: ${LANGS.join(', ')}`))
 
