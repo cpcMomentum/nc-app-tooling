@@ -1,11 +1,12 @@
 {
     "name": "nc-app-tooling",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "description": "Geteilte Entwicklungswerkzeuge der Nextcloud-App-Flotte (cpcMomentum)",
     "type": "module",
     "bin": {
         "nc-l10n-check": "bin/l10n-check.mjs",
-        "nc-pre-commit": "bin/pre-commit.mjs"
+        "nc-pre-commit": "bin/pre-commit.mjs",
+        "nc-release-check": "bin/release-check.mjs"
     },
     "files": [
         "bin",
