@@ -102,6 +102,59 @@ aussteigt, muss dieser Block **davor** — sonst erreicht eine reine
   run: npm run l10n:check
 ```
 
+## `nc-bundle-fresh`
+
+Prüft, ob das vorliegende Bundle zum Quellstand passt. Läuft im Release
+zwischen Signieren und Packen.
+
+```bash
+npx nc-bundle-fresh          # im Wurzelverzeichnis der App
+```
+
+Der Release baut in Schritt 3.1, **packt** aber in Schritt 5.1 einfach, was im
+Arbeitsbaum liegt. Dazwischen prüfte bis 08/2026 nichts, ob dieses Bundle zum
+Quellstand passt — keiner der 15 Tarball-Checks vergleicht Bundle gegen `src/`.
+Ein veraltetes, aber vorhandenes Bundle bestand damit jede Prüfung (#2).
+
+Verglichen wird genau das Paar, das beim Nutzer landet:
+
+| | Quelle | wird |
+|---|---|---|
+| Quellen | `git archive HEAD` | neu gebaut (`npm ci && npm run build`) |
+| Bundle | Arbeitsbaum | dagegen gehalten (SHA-256) |
+
+Ein schmutziger Arbeitsbaum verfälscht das Urteil deshalb **nicht**: was nicht
+committet ist, wird auch nicht ausgeliefert.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | Bundle passt zum Quellstand |
+| 1 | Inhalt weicht ab oder eine Bundle-Datei fehlt — **nicht releasen** |
+| 2 | Der Vergleich war nicht möglich (Build kaputt, Lockfile fehlt) |
+
+Überzählige Dateien im Arbeitsbaum werden genannt, blockieren aber nicht: das
+ist Totgewicht, kein alter ausgelieferter Code — worauf es zeigen würde, ist die
+Einstiegsdatei, und die wird byte-genau verglichen.
+
+Nicht verglichen werden `*.map` und `*.LICENSE.txt` (stehen in den
+Tarball-Excludes, erreichen nie einen Nutzer) und alles, was nicht kompiliert
+ist. Letzteres hat einen konkreten Grund: contractmanager importiert
+`css/main.scss` aus `src/main.ts` — in `css/` wohnt also nicht nur Ausgabe.
+
+## Tests
+
+```bash
+npm test
+```
+
+Sie bauen sich eine Wegwerf-App mit eigenem Build-Skript, brauchen weder
+Nextcloud noch eine der fünf Apps und laufen in Sekunden. In der CI gegen
+Node 20 und 24.
+
+Vier Werkzeuge prüfen fünf Apps — und bis zum 15.08.2026 prüfte niemand die
+vier Werkzeuge. Vier der Werkzeugfehler, die in den Apps aufgefallen sind,
+wären hier aufgefallen.
+
 ## Beitragen
 
 Änderungen wirken auf alle fünf Apps. Vor dem Tag gegen jede laufen lassen:
@@ -111,6 +164,11 @@ for a in worktime contractmanager rechnungswerk vinarium projektwerk; do
   ( cd ../$a && node ../nc-app-tooling/bin/l10n-check.mjs )
 done
 ```
+
+Für `nc-bundle-fresh` derselbe Lauf mit `bin/bundle-fresh.mjs`. Er dauert je App
+6 bis 17 Sekunden, weil er wirklich installiert und baut.
+
+Dann Tag **und** `version` im selben Commit setzen, danach die Apps nachziehen.
 
 Keine Laufzeit-Abhängigkeiten. Läuft mit dem Node, das ohnehin da ist.
 
