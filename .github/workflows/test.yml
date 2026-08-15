@@ -31,6 +31,11 @@ jobs:
       matrix:
         # 20 ist die Untergrenze aus engines, 24 das, womit lokal gearbeitet
         # wird. Bricht eines von beiden, laeuft eine der Apps ins Leere.
+        #
+        # Node 20 hat den ersten Lauf dieser Matrix sofort bezahlt gemacht:
+        # `node --test 'tests/**/*.test.mjs'` lief lokal, aber Node 20 kennt
+        # keine Glob-Muster in --test. Das test-Skript laesst die Shell
+        # expandieren, damit es auf beiden laeuft.
         node: ['20', '24']
     steps:
       - uses: actions/checkout@v4
