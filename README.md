@@ -141,6 +141,37 @@ Tarball-Excludes, erreichen nie einen Nutzer) und alles, was nicht kompiliert
 ist. Letzteres hat einen konkreten Grund: contractmanager importiert
 `css/main.scss` aus `src/main.ts` — in `css/` wohnt also nicht nur Ausgabe.
 
+## Abgelöst: `nc-bundle-check`
+
+Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
+Heuristik: „`src/` geändert, `js/` nicht → Build vergessen". Beides war ungenau.
+Typangaben und Kommentare verschwinden beim Kompilieren, „Quelle geändert,
+Bundle unverändert" ist also oft ein **korrekter** Zustand — und umgekehrt galt
+jede beliebige Änderung unter `js/` als „mitgebaut", ein Bundle aus einem
+fremden Stand bestand die Prüfung. Sein Ausweg `[skip bundle-check]` schaltete
+ihn flottenweit ab.
+
+Der naheliegende Byte-Diff galt als unmöglich, weil die CI das Lockfile wegwarf
+(`rm -f package-lock.json`, mit Verweis auf npm/cli#4828). Das hielt der
+Gegenprüfung nicht stand: der Fehler, der bei `npm ci` tatsächlich auftrat, war
+ein Auflösungsfehler von npm 10 auf einem synchronen Lockfile. Mit npm 11 läuft
+`npm ci` durch, und danach bauen alle fünf Apps unter Linux **byte-identisch**
+zum eingecheckten Bundle.
+
+Seit 08/2026 steht deshalb in der CI der Apps ein echter Vergleich:
+
+```yaml
+      - name: Produktions-Build
+        run: npm run build
+
+      - name: Bundle passt zum Quellstand
+        run: git diff --exit-code -- js/ css/
+```
+
+Kein eigenes Werkzeug nötig — gebaut wurde ohnehin schon. Für den Release, wo
+gegen HEAD statt gegen den Arbeitsbaum verglichen werden muss, gibt es
+`nc-bundle-fresh`.
+
 ## Tests
 
 ```bash
