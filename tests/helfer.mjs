@@ -137,3 +137,42 @@ ${rumpf}
 	}
 }
 `
+
+/**
+ * Legt eine Wegwerf-App mit einem Notifier an.
+ *
+ * `rumpf` ist der Koerper von prepare(), `zusatz` optionaler Klassenkoerper
+ * daneben (Hilfsmethoden). Wie bei schemaApp steht der gepruefte Quelltext
+ * damit neben der Erwartung.
+ */
+export function notifierApp(rumpf, zusatz = '') {
+	const wurzel = mkdtempSync(join(tmpdir(), 'nc-tooling-notify-'))
+	angelegt.push(wurzel)
+	schreibe(wurzel, 'appinfo/info.xml', '<?xml version="1.0"?>\n<info>\n\t<id>testapp</id>\n</info>\n')
+	schreibe(wurzel, 'lib/Notification/Notifier.php', `<?php
+
+declare(strict_types=1);
+
+namespace OCA\\TestApp\\Notification;
+
+use OCP\\IURLGenerator;
+use OCP\\Notification\\INotification;
+use OCP\\Notification\\INotifier;
+
+class Notifier implements INotifier {
+
+	public function __construct(
+		private IURLGenerator $urlGenerator,
+	) {
+	}
+
+	public function prepare(INotification $notification, string $languageCode): INotification {
+${rumpf}
+
+		return $notification;
+	}
+${zusatz}
+}
+`)
+	return wurzel
+}

@@ -7,19 +7,21 @@
  * beim Einfuegen ein und desselben Blocks von Hand. Die App-Hooks sind jetzt
  * ein Aufruf, die Logik steht hier (contractmanager#339).
  *
- * Fuenf Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
+ * Sechs Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
  * gegen den Arbeitsbaum — sonst prueft der Hook etwas anderes als das, was
- * committet wird. Ausnahmen sind die l10n- und die Schema-Pruefung, siehe dort.
+ * committet wird. Ausnahmen sind die drei, die ein Werkzeug aufrufen: l10n,
+ * Schema und Notification lesen den Arbeitsbaum, siehe dort.
  *
  *   1. Merge-Konfliktmarker
  *   2. Zugangsschluessel (Secrets)
  *   3. l10n-Katalog-Konsistenz
  *   4. OCP-only (keine internen OC_-Klassen, kein \OC\-Namensraum)
  *   5. Schema-Portabilitaet der Migrationen
+ *   6. Setter-Vertraege der Notifier
  *
  * Reihenfolge ist bewusst: Die Secret-Pruefung stand frueher NACH einer
  * Pruefung, die bei "keine PHP-Dateien gestaged" mit exit 0 ausstieg — der
- * belegte Leak kam ueber eine .md-Datei. Hier laufen alle fuenf immer.
+ * belegte Leak kam ueber eine .md-Datei. Hier laufen alle sechs immer.
  *
  * Umgehung nur mit `git commit --no-verify`, und das ist keine Loesung.
  */
@@ -195,6 +197,32 @@ if (!dateien.length) process.exit(0)
 				console.log(red('\n[Schema Check] BLOCKED') + '\n')
 				console.log('Die Migration erzeugt ein Schema, das nicht auf allen von')
 				console.log('Nextcloud unterstuetzten Datenbanken zulaessig ist.\n')
+				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
+				process.exit(1)
+			}
+		}
+	}
+}
+
+// --- 6. Setter-Vertraege der Notifier ---------------------------------------
+// Anlass: worktime setzte das Icon mit einer relativen URL. NC 34 wirft dafuer,
+// prepare() bricht mitten in der Benachrichtigung ab, und weil setIcon vor
+// setLink stand, kam jede Benachrichtigung ohne Icon UND ohne Link an
+// (worktime#551, nc-app-tooling#8). Die Unit-Tests konnten es nicht fangen:
+// sie mocken INotification, und ein Mock lehnt keinen Wert ab.
+{
+	if (dateien.some((f) => /^lib\/Notification\/.*\.php$/.test(f))) {
+		const bin = join('node_modules', '.bin', 'nc-notification-check')
+		if (!existsSync(bin)) {
+			console.log(yellow('[Notification Check] uebersprungen — nc-notification-check fehlt.'))
+			console.log('Einmalig  npm install  ausfuehren; im CI laeuft die Pruefung ohnehin.')
+		} else {
+			try {
+				execFileSync(bin, [], { stdio: 'inherit' })
+			} catch {
+				console.log(red('\n[Notification Check] BLOCKED') + '\n')
+				console.log('Der Notifier uebergibt einem NC-Setter einen Wert, den dieser')
+				console.log('ablehnt — die Benachrichtigung kommt unvollstaendig an.\n')
 				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
 				process.exit(1)
 			}

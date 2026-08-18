@@ -228,6 +228,84 @@ Quelltext hier zeilengenau nachgelesen ist, steht das nicht im Verhältnis.
   run: npx nc-schema-check
 ```
 
+## `nc-notification-check`
+
+Prüft, ob die Notifier der App die Setter-Verträge von Nextcloud einhalten.
+Läuft im Pre-Commit und in der CI.
+
+```bash
+npx nc-notification-check          # im Wurzelverzeichnis der App
+```
+
+Anlass ist worktime auf NC 34: das Icon wurde mit einer **relativen** URL
+gesetzt.
+
+```php
+$notification->setIcon($this->urlGenerator->imagePath('worktime', 'app-dark.svg'));
+// => '/custom_apps/worktime/img/app-dark.svg'
+```
+
+`setIcon()` lässt nur absolute `http(s)`-URLs zu und wirft sonst
+`InvalidValueException`. Die Folge war nicht „kein Icon": `prepare()` bricht an
+der Stelle ab, und weil `setIcon` **vor** `setLink` stand, kam jede
+Benachrichtigung ohne Icon **und** ohne Link an — bei jedem Subject,
+unabhängig von den Daten. Dazu Log-Spam im Minutentakt (#8).
+
+Gefangen hat es niemand, weil die Unit-Tests `INotification` mocken und die
+Setter auf `willReturnSelf()` stubben. **Ein Mock kann einen ungültigen Wert
+gar nicht ablehnen** — der Test prüft unsere Annahme über NC, nicht NCs
+Verhalten. Der canary läuft gegen die `ocp`-Stubs, das sind leere
+Methodenrümpfe. Und die Release-Checks rufen `Manager::prepare()` nie auf. In
+der gesamten Pipeline geht keine einzige Benachrichtigung durch ein echtes
+Nextcloud.
+
+Geprüft wird gegen `lib/private/Notification/Notification.php` und
+`Action.php`, nachgelesen in 34.0.0:
+
+| Regel | Wirkung |
+|---|---|
+| `setIcon`/`setLink` mit nachweislich relativem Wert | blockiert |
+| `setIcon`/`setLink` mit Leerwert | blockiert |
+| `setApp`, `setUser`, `set*Subject`, `set*Message` mit Leerwert | blockiert |
+| `Action::setLink` mit einer Anfrageart außerhalb GET/POST/PUT/DELETE/WEB | blockiert |
+
+Die Trennung, um die sich alles dreht, steht in `IURLGenerator` und ist im
+Quelltext acht Zeichen breit:
+
+| liefert einen Pfad | liefert eine URL |
+|---|---|
+| `imagePath()`, `linkTo()`, `linkToRoute()` | `getAbsoluteURL()`, `linkToRouteAbsolute()`, `linkToOCSRouteAbsolute()`, `getBaseUrl()` |
+
+`Action::setLink()` verlangt dasselbe wie `Notification::setLink()` — der
+Riegel hängt deshalb am Setter, nicht am Empfänger.
+
+### Was er nicht sieht
+
+Er urteilt über den **Ausdruck** im Quelltext, nicht über den Wert zur
+Laufzeit. Eine Hilfsmethode derselben Klasse löst er auf, samt Variablen und
+ternären Zweigen — projektwerk baut seinen Deep-Link so, und ohne diesen
+Schritt stünde dort ein Hinweis, der nie verschwindet. Kommt der Wert von
+außerhalb der Datei, sagt er das und blockiert nicht.
+
+Der vollständige Weg wäre, jedes Subject durch `Manager::prepare()` eines
+echten Nextcloud zu schicken, in einer Versionsmatrix. Das braucht je App und
+je NC-Version einen Container samt Datenbank. Für die Klasse von Fehlern, die
+hier aufgetreten ist, steht das nicht im Verhältnis — und der Riegel greift
+schon vor dem Commit statt erst in der CI.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | Verträge eingehalten |
+| 1 | Vertragsverletzung — **nicht mergen** |
+| 2 | Kein App-Verzeichnis (`appinfo/info.xml` fehlt) |
+
+### Im CI
+
+```yaml
+- name: Notification-Vertraege
+  run: npx nc-notification-check
+```
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
@@ -269,7 +347,7 @@ Sie bauen sich eine Wegwerf-App mit eigenem Build-Skript, brauchen weder
 Nextcloud noch eine der fünf Apps und laufen in Sekunden. In der CI gegen
 Node 20 und 24.
 
-Fünf Werkzeuge prüfen fünf Apps — und bis zum 15.08.2026 prüfte niemand die
+Sechs Werkzeuge prüfen fünf Apps — und bis zum 15.08.2026 prüfte niemand die
 Werkzeuge. Vier der Werkzeugfehler, die in den Apps aufgefallen sind, wären
 hier aufgefallen. Der fünfte fiel beim Bau des Schema-Prüfers auf: er meldete
 „Indexnname zu lang", weil sich aus „Index" und „Spalte" kein gemeinsames Wort
@@ -286,10 +364,10 @@ done
 ```
 
 Für `nc-bundle-fresh` derselbe Lauf mit `bin/bundle-fresh.mjs`. Er dauert je App
-6 bis 17 Sekunden, weil er wirklich installiert und baut. `nc-schema-check`
-läuft in Millisekunden und muss über alle fünf grün sein, bevor er ausgerollt
-wird — ein Fehlalarm im Pre-Commit blockiert sonst flottenweit jeden Commit an
-einer Migration.
+6 bis 17 Sekunden, weil er wirklich installiert und baut. `nc-schema-check` und
+`nc-notification-check` laufen in Millisekunden und müssen über alle fünf grün
+sein, bevor sie ausgerollt werden — ein Fehlalarm im Pre-Commit blockiert sonst
+flottenweit jeden Commit an einer Migration oder einem Notifier.
 
 Dann Tag **und** `version` im selben Commit setzen, danach die Apps nachziehen.
 
