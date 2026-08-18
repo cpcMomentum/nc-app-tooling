@@ -85,3 +85,55 @@ export function lauf(werkzeug, wurzel, args = []) {
 	})
 	return { code: r.status, ausgabe: `${r.stdout ?? ''}${r.stderr ?? ''}` }
 }
+
+/**
+ * Legt eine Wegwerf-App an, die nur aus info.xml und Migrationen besteht.
+ *
+ * Bewusst ohne git und ohne Build: nc-schema-check liest den Arbeitsbaum und
+ * braucht weder das eine noch das andere. Die Faelle sind kurz genug, um sie
+ * im Test als Quelltext hinzuschreiben — was geprueft wird, steht damit neben
+ * der Erwartung, nicht in einer Fixture-Datei drei Verzeichnisse weiter.
+ */
+export function schemaApp({ minVersion = 32, datenbanken = [], migrationen = {} }) {
+	const wurzel = mkdtempSync(join(tmpdir(), 'nc-tooling-schema-'))
+	angelegt.push(wurzel)
+
+	const deps = datenbanken.length
+		? `\n\t<dependencies>\n${datenbanken.map((d) => `\t\t<database>${d}</database>`).join('\n')}`
+			+ `\n\t\t<nextcloud min-version="${minVersion}" max-version="34"/>\n\t</dependencies>`
+		: `\n\t<dependencies>\n\t\t<nextcloud min-version="${minVersion}" max-version="34"/>\n\t</dependencies>`
+
+	schreibe(wurzel, 'appinfo/info.xml',
+		`<?xml version="1.0"?>\n<info>\n\t<id>testapp</id>${deps}\n</info>\n`)
+
+	for (const [name, rumpf] of Object.entries(migrationen)) {
+		schreibe(wurzel, `lib/Migration/${name}.php`, migration(rumpf))
+	}
+	return wurzel
+}
+
+/** Haengt einen changeSchema-Rumpf in eine ansonsten echte NC-Migration. */
+export const migration = (rumpf) => `<?php
+
+declare(strict_types=1);
+
+namespace OCA\\TestApp\\Migration;
+
+use Closure;
+use OCP\\DB\\ISchemaWrapper;
+use OCP\\DB\\Types;
+use OCP\\Migration\\IOutput;
+use OCP\\Migration\\SimpleMigrationStep;
+
+class TestMigration extends SimpleMigrationStep {
+
+	public function changeSchema(IOutput $output, Closure $schemaClosure, array $options): ?ISchemaWrapper {
+		/** @var ISchemaWrapper $schema */
+		$schema = $schemaClosure();
+
+${rumpf}
+
+		return $schema;
+	}
+}
+`
