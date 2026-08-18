@@ -7,18 +7,19 @@
  * beim Einfuegen ein und desselben Blocks von Hand. Die App-Hooks sind jetzt
  * ein Aufruf, die Logik steht hier (contractmanager#339).
  *
- * Vier Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
+ * Fuenf Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
  * gegen den Arbeitsbaum — sonst prueft der Hook etwas anderes als das, was
- * committet wird. Ausnahme ist die l10n-Pruefung, siehe dort.
+ * committet wird. Ausnahmen sind die l10n- und die Schema-Pruefung, siehe dort.
  *
  *   1. Merge-Konfliktmarker
  *   2. Zugangsschluessel (Secrets)
  *   3. l10n-Katalog-Konsistenz
  *   4. OCP-only (keine internen OC_-Klassen, kein \OC\-Namensraum)
+ *   5. Schema-Portabilitaet der Migrationen
  *
  * Reihenfolge ist bewusst: Die Secret-Pruefung stand frueher NACH einer
  * Pruefung, die bei "keine PHP-Dateien gestaged" mit exit 0 ausstieg — der
- * belegte Leak kam ueber eine .md-Datei. Hier laufen alle vier immer.
+ * belegte Leak kam ueber eine .md-Datei. Hier laufen alle fuenf immer.
  *
  * Umgehung nur mit `git commit --no-verify`, und das ist keine Loesung.
  */
@@ -169,6 +170,35 @@ if (!dateien.length) process.exit(0)
 		block('OCP-API Check',
 			'Interne OC_*/\\OC\\-API benutzt. Stattdessen \\OCP\\ verwenden.\n'
 			+ '(worktime#88, contractmanager#86 — OC_App::getAppPath entfiel in NC 33.)\n', funde)
+	}
+}
+
+// --- 5. Schema-Portabilitaet ------------------------------------------------
+// Anlass: worktime v0.16.0 legte eine NOT-NULL-Boolean an. Alle 15
+// Tarball-Checks und der Upgrade-Test waren gruen — beim Nutzer brach das
+// App-Update ab (worktime#596, nc-app-tooling#7). Migrationen laufen in der
+// ganzen Pipeline genau einmal, gegen Postgres, und Postgres nimmt das klaglos.
+//
+// Wie die l10n-Pruefung liest diese den ARBEITSBAUM: sie braucht alle
+// Migrationen und die info.xml, nicht einzelne Dateien. Der CI-Lauf prueft den
+// committeten Stand nach.
+{
+	if (dateien.some((f) => /^lib\/Migration\/.*\.php$/.test(f))) {
+		const bin = join('node_modules', '.bin', 'nc-schema-check')
+		if (!existsSync(bin)) {
+			console.log(yellow('[Schema Check] uebersprungen — nc-schema-check fehlt.'))
+			console.log('Einmalig  npm install  ausfuehren; im CI laeuft die Pruefung ohnehin.')
+		} else {
+			try {
+				execFileSync(bin, [], { stdio: 'inherit' })
+			} catch {
+				console.log(red('\n[Schema Check] BLOCKED') + '\n')
+				console.log('Die Migration erzeugt ein Schema, das nicht auf allen von')
+				console.log('Nextcloud unterstuetzten Datenbanken zulaessig ist.\n')
+				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
+				process.exit(1)
+			}
+		}
 	}
 }
 

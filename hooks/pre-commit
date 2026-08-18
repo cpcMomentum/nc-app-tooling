@@ -5,8 +5,9 @@
 # auseinanderlaeuft (contractmanager#339). Diese Datei ist nur der Aufruf und
 # soll in allen Apps identisch sein — Aenderungen gehoeren ins Werkzeug.
 #
-#   1. Merge-Konfliktmarker      3. l10n-Katalog-Konsistenz
-#   2. Zugangsschluessel          4. OCP-only
+#   1. Merge-Konfliktmarker      4. OCP-only
+#   2. Zugangsschluessel          5. Schema-Portabilitaet der Migrationen
+#   3. l10n-Katalog-Konsistenz
 #
 # Umgehung (nicht empfohlen): git commit --no-verify
 

@@ -141,6 +141,93 @@ Tarball-Excludes, erreichen nie einen Nutzer) und alles, was nicht kompiliert
 ist. Letzteres hat einen konkreten Grund: contractmanager importiert
 `css/main.scss` aus `src/main.ts` — in `css/` wohnt also nicht nur Ausgabe.
 
+## `nc-schema-check`
+
+Prüft Migrationen auf Schema-Portabilität über die von Nextcloud unterstützten
+Datenbanken. Läuft im Pre-Commit und in der CI.
+
+```bash
+npx nc-schema-check          # im Wurzelverzeichnis der App
+```
+
+Anlass ist worktime v0.16.0: die Migration legte eine `Types::BOOLEAN`-Spalte
+mit `'notnull' => true` an. Alle 15 Tarball-Checks und der Upgrade-Test waren
+grün, beim Nutzer brach das App-Update ab.
+
+```
+Column "oc_wt_employees"."vacation_transferred" is type Bool and also NotNull,
+so it can not store "false".
+```
+
+Durchgerutscht ist das, weil Migrationen in der gesamten Pipeline **genau
+einmal** ausgeführt werden: im Upgrade-Test des Release, gegen die lokale
+Dev-Instanz. Die ist Postgres, und Postgres nimmt eine NOT-NULL-Boolean
+klaglos. Die Unit-Tests laufen gegen die `nextcloud/ocp`-Stubs und führen gar
+keine Migration aus (#7).
+
+Geprüft wird gegen NCs eigene Regeln aus
+`lib/private/DB/MigrationService.php` — nachgelesen in v32.0.0, v33.0.0 und
+34.0.0, nicht aus der Dokumentation übernommen:
+
+| Regel | Wirkung |
+|---|---|
+| `Types::BOOLEAN` mit `notnull => true` — oder ganz ohne die Option | blockiert |
+| `notnull` mit `default => ''`, Spalte an bestehende Tabelle | blockiert |
+| `Types::STRING` mit `length` über 4000 | blockiert |
+| Tabellen-, Spalten-, Index- und Schlüsselnamen über dem Limit | blockiert |
+
+Die zweite Zeile der Tabelle liest sich harmlos und ist die unauffälligste
+Falle: Doctrine setzt `Column::$_notnull` auf **true**, wenn die Option fehlt.
+Wer `notnull` weglässt, bekommt NOT NULL — und bei einer Boolean-Spalte damit
+denselben Abbruch wie der, der es hinschreibt.
+
+### Die zwei Gültigkeitsbedingungen
+
+Ohne sie meldet der Prüfer die halbe Flotte falsch rot — beides steht so im
+Quelltext von Nextcloud:
+
+1. **Die `<database>`-Deklaration.** `ensureOracleConstraints()` läuft nur, wenn
+   `checkOracle` gesetzt ist, und das passiert, wenn `info.xml` **keine**
+   `<database>`-Abhängigkeit nennt oder ausdrücklich `oci`. rechnungswerk und
+   projektwerk deklarieren `sqlite`/`mysql`/`pgsql` und sind von den ersten drei
+   Regeln ausgenommen; worktime, contractmanager und vinarium nicht.
+2. **Die NC-Version.** In v32 wirft die NOT-NULL-Boolean, seit v33 wird sie auf
+   Oracle still auf nullable gesetzt (nextcloud/server#55156). Die
+   Namenslängen sind umgekehrt gewandert: v32 kannte die scharfen
+   Oracle-Grenzen (30 für Spalten und Indizes, 27 für Tabellen, **22** wenn der
+   Primärschlüssel keinen eigenen Namen bekommt), seit v33 gilt eine glatte 63
+   für alle. Welche greifen, entscheidet `min-version` aus `info.xml`.
+
+Die Flotte sitzt bei den Namen dicht an der Grenze: 29 Zeichen beim längsten
+Index, 22 bei `contractmgr_categories`. Der nächste Name ist der, der sie reißt
+— und contractmanager läuft ab NC 32.
+
+### Was er nicht sieht
+
+Bezeichner, die erst zur Laufzeit feststehen — vinarium legt zwei Spalten in
+einer Schleife an (`addColumn($column, …)`). Typ und Optionen stehen trotzdem
+im Quelltext und werden geprüft, die Länge nicht. Solche Stellen **nennt** er,
+statt sie still zu überspringen: ein Grün, das über eine ungeprüfte Stelle
+schweigt, liest sich wie eine Zusage, die der Prüfer nicht gibt.
+
+Geprüft wird statisch. Der gründlichere Weg wäre, NCs eigenen Validator gegen
+das erzeugte Schema laufen zu lassen — das braucht je App und je NC-Version
+einen NC-Container samt Datenbank. Für vier klar umrissene Regeln, deren
+Quelltext hier zeilengenau nachgelesen ist, steht das nicht im Verhältnis.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | Schema ist portabel |
+| 1 | Regelverstoß — **nicht mergen** |
+| 2 | Kein App-Verzeichnis (`appinfo/info.xml` fehlt) |
+
+### Im CI
+
+```yaml
+- name: Schema-Portabilitaet
+  run: npx nc-schema-check
+```
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
@@ -182,9 +269,11 @@ Sie bauen sich eine Wegwerf-App mit eigenem Build-Skript, brauchen weder
 Nextcloud noch eine der fünf Apps und laufen in Sekunden. In der CI gegen
 Node 20 und 24.
 
-Vier Werkzeuge prüfen fünf Apps — und bis zum 15.08.2026 prüfte niemand die
-vier Werkzeuge. Vier der Werkzeugfehler, die in den Apps aufgefallen sind,
-wären hier aufgefallen.
+Fünf Werkzeuge prüfen fünf Apps — und bis zum 15.08.2026 prüfte niemand die
+Werkzeuge. Vier der Werkzeugfehler, die in den Apps aufgefallen sind, wären
+hier aufgefallen. Der fünfte fiel beim Bau des Schema-Prüfers auf: er meldete
+„Indexnname zu lang", weil sich aus „Index" und „Spalte" kein gemeinsames Wort
+bilden lässt. Das hat der Test gefunden, nicht das Lesen.
 
 ## Beitragen
 
@@ -197,7 +286,10 @@ done
 ```
 
 Für `nc-bundle-fresh` derselbe Lauf mit `bin/bundle-fresh.mjs`. Er dauert je App
-6 bis 17 Sekunden, weil er wirklich installiert und baut.
+6 bis 17 Sekunden, weil er wirklich installiert und baut. `nc-schema-check`
+läuft in Millisekunden und muss über alle fünf grün sein, bevor er ausgerollt
+wird — ein Fehlalarm im Pre-Commit blockiert sonst flottenweit jeden Commit an
+einer Migration.
 
 Dann Tag **und** `version` im selben Commit setzen, danach die Apps nachziehen.
 
