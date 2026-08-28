@@ -7,7 +7,8 @@
         "nc-l10n-check": "bin/l10n-check.mjs",
         "nc-pre-commit": "bin/pre-commit.mjs",
         "nc-release-check": "bin/release-check.mjs",
-        "nc-bundle-fresh": "bin/bundle-fresh.mjs"
+        "nc-bundle-fresh": "bin/bundle-fresh.mjs",
+        "nc-schema-check": "bin/schema-check.mjs"
     },
     "scripts": {
         "test": "node --test tests/*.test.mjs"
