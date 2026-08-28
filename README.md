@@ -306,6 +306,44 @@ schon vor dem Commit statt erst in der CI.
   run: npx nc-notification-check
 ```
 
+## `nc-appstore-token`
+
+Löst den App-Store-Token **maschinell** auf — Datei zuerst, Env als Fallback,
+lautes Scheitern statt still leer.
+
+```bash
+TOKEN="$(npx nc-appstore-token)" || exit 1
+```
+
+Anlass ist rechnungswerk v0.5.1 (19.08.2026): der Release wurde von Hand
+deployt statt in den App Store geladen, weil die Umgebungsvariable
+`NC_APPSTORE_TOKEN` leer war — und daraus falsch geschlossen wurde, der Token
+liege „nicht auf dem Rechner". Tatsächlich lag er die ganze Zeit als Datei vor
+(`~/.nextcloud/appstore-token`, mode 0600), dieselbe Quelle, aus der alle
+Flotten-Apps ihren Upload speisen. Der Store-Upload ließ sich damit nachträglich
+problemlos abschließen (#12).
+
+Die Regel „Token = Datei, Env nur Fallback" stand bis dahin nur als Prosa im
+Release-Skill — und Prosa erodiert: die Vorgänger-Fassung nannte sogar **nur**
+die Env-Variable, genau der Fehlschluss, der zum Vorfall führte. Dieses Werkzeug
+ist die eine Wahrheit über die Herkunft.
+
+| Regel | Wirkung |
+|---|---|
+| Datei `~/.nextcloud/appstore-token` nicht leer | gewinnt, auch wenn die Env gesetzt ist |
+| Datei fehlt/leer, `NC_APPSTORE_TOKEN` gesetzt | Env-Fallback |
+| beide leer | **exit 1** mit klarer Meldung, statt einen Leerwert zu liefern |
+
+Der Vertrag hält `TOKEN="$(npx nc-appstore-token)"` sauber: **nur** der Token
+geht auf stdout, jede Diagnose auf stderr, und der Token-Wert selbst wird nie
+geloggt (nur Herkunft und Länge). Ein lautes Scheitern hier ist besser als ein
+stiller Hand-Deploy.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | Token aufgelöst — steht auf stdout |
+| 1 | Token weder in Datei noch in Env |
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
