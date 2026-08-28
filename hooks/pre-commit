@@ -7,7 +7,7 @@
 #
 #   1. Merge-Konfliktmarker      4. OCP-only
 #   2. Zugangsschluessel          5. Schema-Portabilitaet der Migrationen
-#   3. l10n-Katalog-Konsistenz
+#   3. l10n-Katalog-Konsistenz   6. Setter-Vertraege der Notifier
 #
 # Umgehung (nicht empfohlen): git commit --no-verify
 

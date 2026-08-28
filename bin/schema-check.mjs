@@ -45,6 +45,8 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { alsName, argumente, zeileVon } from './php-lesen.mjs'
+
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
@@ -87,42 +89,6 @@ if (!dateien.length) {
 	console.log(green('✓ nc-schema-check: keine Migrationen gefunden, nichts zu pruefen.'))
 	process.exit(0)
 }
-
-/**
- * Zerlegt die Argumentliste eines Aufrufs ab der oeffnenden Klammer.
- * Beachtet Verschachtelung und Zeichenketten, damit ein Komma in einem
- * Array-Literal oder in einer Meldung die Liste nicht zerreisst.
- */
-function argumente(quelle, klammerAuf) {
-	const args = []
-	let tiefe = 0
-	let start = klammerAuf + 1
-	let quote = null
-	for (let i = start; i < quelle.length; i++) {
-		const c = quelle[i]
-		if (quote) {
-			if (c === '\\') i++
-			else if (c === quote) quote = null
-			continue
-		}
-		if (c === "'" || c === '"') { quote = c; continue }
-		if (c === '(' || c === '[' || c === '{') tiefe++
-		else if (c === ')' || c === ']' || c === '}') {
-			if (c === ')' && tiefe === 0) {
-				args.push(quelle.slice(start, i))
-				return { args, ende: i }
-			}
-			tiefe--
-		} else if (c === ',' && tiefe === 0) {
-			args.push(quelle.slice(start, i))
-			start = i + 1
-		}
-	}
-	return { args, ende: quelle.length }
-}
-
-const zeileVon = (quelle, index) => quelle.slice(0, index).split('\n').length
-const alsName = (arg) => (arg.trim().match(/^['"]([^'"]*)['"]$/) || [])[1] ?? null
 
 /** Types::BOOLEAN → boolean, 'string' → string. Sonst null. */
 function alsTyp(arg) {
