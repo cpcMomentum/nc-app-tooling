@@ -344,6 +344,64 @@ stiller Hand-Deploy.
 | 0 | Token aufgelöst — steht auf stdout |
 | 1 | Token weder in Datei noch in Env |
 
+## `nc-compat-check`
+
+Meldet, wenn ein neues Nextcloud-**Major** über der `max-version` der App
+erschienen ist. Der Erkennungs-Schritt eines geplanten Workflows, der die
+`max-version` nicht blind hebt, sondern **prüft**.
+
+```bash
+npx nc-compat-check          # im Wurzelverzeichnis der App
+```
+
+Nextcloud released 2×/Jahr ein neues Major. Die `max-version` von Hand
+nachzuziehen ist leicht vergessen — und ein Bump ohne Test ist eine ungeprüfte
+Zusage (nc-app-tooling#17, aus #13). Dieses Werkzeug sagt nur, **ob** ein neues
+Major da ist und **welches**; der Workflow drumherum testet die App gegen dessen
+`nextcloud/ocp`-Stubs und macht daraus einen **PR** (grün, hebt `max-version`)
+oder ein **Issue** (rot, mit Log). So wird die Zusage geprüft, nicht geraten.
+
+Quelle der neuesten NC-Version sind die `nextcloud/ocp`-Releases auf Packagist —
+genau das Paket, gegen dessen Stubs getestet wird. Stabile Releases sind
+`vMAJOR.MINOR.PATCH`; `dev-stableXX`-Branches werden ignoriert. Für Tests und
+manuelle Läufe lässt sich die Antwort per `NC_COMPAT_LATEST_MAJOR`
+überschreiben.
+
+Die Ausgabe ist auf den Workflow zugeschnitten — `key=value` auf stdout und,
+in GitHub Actions, in `$GITHUB_OUTPUT`, sodass ein `if:` daran hängen kann:
+
+```
+neu=            (leer)   oder  neu=35
+constraint=     (leer)   oder  constraint=^35.0
+```
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | erkannt (auch „nichts zu tun" — ein neues Major ist kein Fehler) |
+| 1 | Erkennung gescheitert (kein `info.xml`, keine `max-version`, Packagist nicht erreichbar) |
+
+### Der Workflow drumherum
+
+Geplant (wöchentlich) plus `workflow_dispatch`. Läuft nur vom **Default-Branch**.
+Echte Arbeit nur, wenn `neu` gesetzt ist:
+
+```yaml
+on:
+  schedule: [{ cron: '17 6 * * 1' }]   # Montag früh
+  workflow_dispatch:
+jobs:
+  compat:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: npm ci
+      - id: detect
+        run: npx nc-compat-check
+      # ab hier nur, wenn steps.detect.outputs.neu != '':
+      # composer require nextcloud/ocp:${{ steps.detect.outputs.constraint }} + phpunit
+      #   grün → PR, der max-version hebt · rot → Issue mit Log (idempotent)
+```
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
