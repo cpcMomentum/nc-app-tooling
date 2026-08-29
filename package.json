@@ -10,7 +10,8 @@
         "nc-bundle-fresh": "bin/bundle-fresh.mjs",
         "nc-schema-check": "bin/schema-check.mjs",
         "nc-notification-check": "bin/notification-check.mjs",
-        "nc-appstore-token": "bin/appstore-token.mjs"
+        "nc-appstore-token": "bin/appstore-token.mjs",
+        "nc-compat-check": "bin/compat-check.mjs"
     },
     "scripts": {
         "test": "node --test tests/*.test.mjs"

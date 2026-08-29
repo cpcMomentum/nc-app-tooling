@@ -1,6 +1,6 @@
 name: test
 
-# Sieben Werkzeuge pruefen fuenf Apps — und bis zum 15.08.2026 pruefte niemand
+# Acht Werkzeuge pruefen fuenf Apps — und bis zum 15.08.2026 pruefte niemand
 # die Werkzeuge. Vier der Werkzeugfehler, die in den Apps aufgefallen sind,
 # waeren hier aufgefallen: der Fehlalarm des Bundle-Checks (#1), die
 # zusammengesetzten PHP-Meldungen, die dynamisch uebersetzten Schluessel und
