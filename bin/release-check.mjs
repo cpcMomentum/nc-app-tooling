@@ -26,6 +26,8 @@ import { readFileSync, existsSync, mkdtempSync, statSync, rmSync } from 'node:fs
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
+import { APPINFO_ERLAUBT, WHITELIST } from './release-regeln.mjs'
+
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
@@ -117,17 +119,16 @@ hatSignatur ? ok(6, 'signature.json vorhanden')
 
 // --- 9: Whitelist ------------------------------------------------------------
 {
-	const ERLAUBT = new Set(['appinfo', 'CHANGELOG.md', 'css', 'img', 'js', 'l10n',
-		'lib', 'LICENSE', 'README.md', 'templates', 'vendor'])
+	// Whitelist und appinfo-Regeln kommen aus release-regeln.mjs — dieselbe
+	// Quelle, aus der nc-pack den Baum BAUT (nc-app-tooling#20).
 	const top = [...new Set(eintraege
 		.filter((e) => e.startsWith(`${APP}/`))
 		.map((e) => e.slice(APP.length + 1).split('/')[0])
 		.filter(Boolean))]
-	const fremd = top.filter((e) => !ERLAUBT.has(e))
+	const fremd = top.filter((e) => !WHITELIST.has(e))
 	fremd.length ? fail(9, 'Whitelist', 'unerwartete Eintraege — Tarball-Excludes anpassen:', fremd)
 		: ok(9, 'Whitelist')
 
-	const APPINFO_ERLAUBT = new Set(['info.xml', 'routes.php', 'signature.json'])
 	const appinfo = eintraege
 		.filter((e) => e.startsWith(`${APP}/appinfo/`) && !e.endsWith('/'))
 		.map((e) => e.slice(`${APP}/appinfo/`.length))
