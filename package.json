@@ -7,6 +7,7 @@
         "nc-l10n-check": "bin/l10n-check.mjs",
         "nc-pre-commit": "bin/pre-commit.mjs",
         "nc-release-check": "bin/release-check.mjs",
+        "nc-pack": "bin/pack.mjs",
         "nc-bundle-fresh": "bin/bundle-fresh.mjs",
         "nc-schema-check": "bin/schema-check.mjs",
         "nc-notification-check": "bin/notification-check.mjs",
