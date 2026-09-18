@@ -138,7 +138,27 @@ process.on('exit', () => {
 
 	// Quellstand aus HEAD auspacken — nicht aus dem Arbeitsbaum. Ausgeliefert
 	// wird HEAD; was nur im Arbeitsbaum liegt, geht den Nutzer nichts an.
-	execFileSync('bash', ['-c', `mkdir -p '${bau}' && git archive HEAD | tar -x -C '${bau}'`], { stdio: 'inherit' })
+	//
+	// Bewusst NICHT `git archive HEAD`: das respektiert `.gitattributes
+	// export-ignore`, und die Apps ignorieren dort genau die Build-Eingaben
+	// (`src/`, `package.json`, `package-lock.json`, `vite.config.*` …), damit sie
+	// nicht ins Release-Tarball geraten (nc-app-tooling#21). Ein Archiv liefert
+	// dann nur noch die Release-Whitelist — dem Referenz-Build fehlt alles zum
+	// Bauen, `npm ci` bricht ab (nc-app-tooling#22/#23). Das waere Ausfall des
+	// Pruefers, nicht Bundle-Drift.
+	//
+	// Deshalb der volle getrackte HEAD-Stand, export-ignore-frei: ein Wegwerf-
+	// Index aus `read-tree HEAD`, dann `checkout-index` — das kennt export-ignore
+	// gar nicht und schreibt jede getrackte Datei. Ergebnis ist byte-genau HEADs
+	// Baum, ohne den Arbeitsbaum oder den echten Index anzufassen.
+	execFileSync('bash', ['-c',
+		`set -e\n`
+		+ `mkdir -p '${bau}'\n`
+		+ `idx="$(mktemp)"\n`
+		+ `trap 'rm -f "$idx"' EXIT\n`
+		+ `GIT_INDEX_FILE="$idx" git read-tree HEAD\n`
+		+ `GIT_INDEX_FILE="$idx" git checkout-index -a -f --prefix='${bau}/'`,
+	], { stdio: 'inherit' })
 
 	// Das alte Bundle kommt mit dem Archiv mit, denn js/ und css/ sind in Git
 	// getrackt. Es muss weg, sonst ist die Referenz kein Neubau, sondern der

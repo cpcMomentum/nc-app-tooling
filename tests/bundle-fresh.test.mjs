@@ -124,6 +124,25 @@ test('ein schmutziger Arbeitsbaum aendert das Urteil nicht', () => {
 	assert.equal(code, 0, ausgabe)
 })
 
+test('export-ignore der Build-Eingaben hungert den Referenz-Build nicht aus', () => {
+	const app = wegwerfApp()
+	// Seit nc-app-tooling#21 tragen die Apps eine .gitattributes, die die
+	// Build-Eingaben aus dem Release-Archiv nimmt (export-ignore), damit sie
+	// nicht ins Tarball geraten. Zoege das Werkzeug seinen Referenz-Build aus
+	// `git archive HEAD`, fehlten hier package-lock.json, src/ und das
+	// Build-Skript — `npm ci` briche mit Exit 2 ab (nc-app-tooling#22/#23). Der
+	// Frische-Check muss den vollen getrackten HEAD-Stand bauen, nicht das
+	// export-ignore-gefilterte Archiv.
+	schreibe(app, '.gitattributes',
+		['/src', 'package.json', 'package-lock.json', 'bauen.mjs', '.gitattributes']
+			.map((p) => `${p} export-ignore`).join('\n') + '\n')
+	commit(app, 'export-ignore fuer Build-Eingaben (nc-app-tooling#21)')
+
+	const { code, ausgabe } = lauf('bundle-fresh.mjs', app)
+	assert.equal(code, 0, ausgabe)
+	assert.match(ausgabe, /Bundle passt zum Quellstand/)
+})
+
 test('ohne Lockfile bricht das Werkzeug ab, statt zu raten', () => {
 	const app = wegwerfApp()
 	rmSync(join(app, 'package-lock.json'))
