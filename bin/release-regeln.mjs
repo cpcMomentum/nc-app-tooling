@@ -19,6 +19,11 @@
 export const WHITELIST = new Set([
 	'appinfo', 'CHANGELOG.md', 'css', 'img', 'js', 'l10n',
 	'lib', 'LICENSE', 'README.md', 'templates', 'vendor',
+	// „Was ist neu?"-Fenster (Baustein 0b): whatsnew.json + Bilder liegen als
+	// getrackter Ordner im App-Paket und gehoeren ausgeliefert. Ohne diesen
+	// Eintrag wiese nc-pack (und nc-release-check Check 9) den Ordner als Stray
+	// ab, und das erste Release mit Fenster fiele auf die Nase.
+	'whatsnew',
 ])
 
 // Unter appinfo/ gehoert nur das hin. signature.json entsteht erst beim
