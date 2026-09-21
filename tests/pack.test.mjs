@@ -79,6 +79,23 @@ test('export-ignore-Dev-Dateien kommen gar nicht erst in den Baum', () => {
 	assert.ok(!existsSync(join(baum, 'package.json')), 'package.json haette weg sein muessen')
 })
 
+test('whatsnew/ gehoert ins Release und bleibt im Baum', () => {
+	const app = releaseFertig(wegwerfApp())
+	// Das „Was ist neu?"-Fenster (Baustein 0b) liefert whatsnew.json + Bilder als
+	// getrackten Ordner mit aus. Er steht in der Whitelist (release-regeln.mjs) —
+	// nc-pack darf ihn also NICHT als Stray abweisen, sonst kippt das erste
+	// Release mit Fenster.
+	schreibe(app, 'whatsnew/whatsnew.json',
+		'{"1.0.0":[{"title":{"de":"Neu","en":"New"}}]}\n')
+	schreibe(app, 'whatsnew/reply.png', 'PNG\n')
+	commit(app, 'whatsnew-Fenster-Inhalte')
+
+	const { code, baum, ausgabe } = pack(app)
+	assert.equal(code, 0, ausgabe)
+	assert.ok(existsSync(join(baum, 'whatsnew/whatsnew.json')), 'whatsnew.json fehlt im Baum')
+	assert.ok(existsSync(join(baum, 'whatsnew/reply.png')), 'whatsnew-Bild fehlt im Baum')
+})
+
 test('ein unerlaubter Top-Level-Eintrag bricht VOR dem Signieren ab', () => {
 	const app = releaseFertig(wegwerfApp())
 	// Nicht export-ignored, nicht in der Whitelist — genau der Fall (.nvmrc,
