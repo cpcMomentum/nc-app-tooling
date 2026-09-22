@@ -1,0 +1,32 @@
+name: ocp-Versionen ableiten
+description: >
+  Leitet die zu testenden nextcloud/ocp-Versionen aus appinfo/info.xml ab und
+  filtert sie nach der PHP-Version des Jobs (nc-app-tooling#28). Ersetzt die je
+  App kopierte Inline-Bash. Laeuft mit dem auf dem Runner vorinstallierten Node
+  — kein setup-node, kein npm ci.
+
+inputs:
+  php-version:
+    description: 'PHP-Version des Jobs, z. B. 8.2 (matrix.php-version).'
+    required: true
+
+outputs:
+  ocp:
+    description: 'Leerzeichengetrennte ocp-Constraints, z. B. "^32.0 ^33.0 ^34.0".'
+    value: ${{ steps.derive.outputs.ocp }}
+  uebersprungen:
+    description: 'Uebersprungene Versionen mit Begruendung, z. B. "^35.0 (braucht PHP >= 8.3)".'
+    value: ${{ steps.derive.outputs.uebersprungen }}
+
+runs:
+  using: composite
+  steps:
+    # PHP-Version ueber env, nicht per ${{ }}-Interpolation ins Skript:
+    # info.xml ist in einem PR aenderbar, direkte Interpolation waere eine
+    # Script-Injection-Luecke. Das Skript nutzt nur Node-Builtins + fetch,
+    # daher genuegt das Runner-Node.
+    - id: derive
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/ocp-versionen.mjs"
+      env:
+        PHPV: ${{ inputs.php-version }}

@@ -402,6 +402,72 @@ jobs:
       #   grün → PR, der max-version hebt · rot → Issue mit Log (idempotent)
 ```
 
+## Composite Action `ocp-versionen`
+
+Leitet die zu testenden `nextcloud/ocp`-Versionen aus `appinfo/info.xml` ab und
+**filtert sie nach der PHP-Version des Jobs**. Ersetzt die ~25 Zeilen Bash, die
+sonst je App in `phpunit.yml` kopiert würden (nc-app-tooling#28).
+
+```yaml
+      - uses: cpcMomentum/nc-app-tooling/.github/actions/ocp-versionen@v1.16.0
+        id: derive
+        with:
+          php-version: ${{ matrix.php-version }}
+      - env:
+          OCP_VERSIONS: ${{ steps.derive.outputs.ocp }}
+        run: |
+          for ocp in $OCP_VERSIONS; do
+            composer require --dev --no-update "nextcloud/ocp:$ocp"
+            composer update --no-interaction --prefer-dist
+            composer test
+          done
+```
+
+**Warum es das braucht.** NC 35 lässt PHP 8.2 fallen (`nextcloud/ocp` v35
+verlangt `~8.3 || ~8.4 || ~8.5`). Die Apps pinnen `config.platform.php` aber auf
+ihre eigene Untergrenze (8.2), damit das ausgelieferte `vendor/` dort läuft. Der
+Pin ist richtig — er gilt dem Release. Für den Testlauf ist er falsch: ohne
+diesen Filter scheitert der Job „PHP 8.2" schon an der `composer`-Auflösung, und
+genau diese Fehldiagnose meldete `nc-compat` als „API-Änderung in NC 35"
+(contractmanager#414). Betrifft alle fünf Apps und kommt bei jedem neuen
+NC-Major wieder.
+
+Läuft mit dem auf dem Runner vorinstallierten Node (nur Builtins + `fetch`) —
+**kein `setup-node`, kein `npm ci`**, damit die kurzen PHP-Jobs kurz bleiben.
+
+| Ein-/Ausgabe | |
+|---|---|
+| Eingabe `php-version` | PHP-Version des Jobs, z. B. `8.2` |
+| Ausgabe `ocp` | `^32.0 ^33.0 ^34.0` (leerzeichengetrennt, für die Schleife) |
+| Ausgabe `uebersprungen` | `^35.0 (braucht PHP >= 8.3)`, fürs Protokoll |
+
+`min`/`max` kommen aus `<nextcloud min-version max-version/>`; ein `max-version`-
+Bump zieht die getesteten Versionen automatisch mit. Die PHP-Untergrenze je
+`ocp`-Version wird aus deren `require.php` auf Packagist gelesen (kleinste
+genannte `x.y`), nicht aus einer Tabelle. Verhalten in den Randfällen:
+
+| Fall | Verhalten |
+|---|---|
+| `min`/`max` fehlt in `info.xml` | Exit 1 |
+| Packagist nicht erreichbar | Exit 1 (ein stummer Netzfehler darf nicht als „alles grün" durchgehen) |
+| `ocp`-Version, die Packagist nicht kennt | **eingeschlossen** — scheitert dann laut am `composer require`, statt lautlos zu verschwinden |
+| keine Version läuft auf diesem PHP | Exit 1 (Matrix und `info.xml` passen nicht zusammen) |
+
+Für Tests liest die Action die Packagist-Antwort per `OCP_PACKAGIST_FILE` aus
+einer lokalen Datei statt aus dem Netz — dieselbe Idee wie
+`NC_COMPAT_LATEST_MAJOR` bei `nc-compat-check`.
+
+### Die eine Zeile daneben (bewusst nicht in der Action)
+
+Der Filter sagt nur, **welche** `ocp`-Versionen laufen. Damit `composer` sie auf
+dem Job-PHP auch auflöst, muss der Platform-Pin für den Wegwerf-Testlauf weichen
+— das ist je eine Zeile und bleibt im Workflow, nicht in der Action:
+
+- **`phpunit.yml`**, vor dem Testlauf: `composer config platform.php "$MATRIX_PHP"`
+  (nur im Arbeitsverzeichnis des Laufs, nichts davon wird committet).
+- **`nc-compat.yml`**, vor dem Kompat-Test: `composer config --unset platform.php`,
+  damit der Wächter beim nächsten Major wirklich testet.
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
