@@ -23,7 +23,8 @@
  *   ocp=^32.0 ^33.0 ^34.0            (leerzeichengetrennt)
  *   uebersprungen=^35.0 (braucht PHP >= 8.3)
  * Diagnose geht auf stderr. Exit 1 nur, wenn die Ableitung selbst scheitert
- * (kein info.xml/min-max, Packagist nicht erreichbar, leere Ergebnisliste).
+ * (kein info.xml/min-max, Packagist nicht erreichbar, eine im Bereich liegende
+ * aber Packagist-unbekannte Version, leere Ergebnisliste).
  *
  * QUELLE der PHP-Untergrenzen: die require.php der jeweiligen nextcloud/ocp-
  * Version auf Packagist — gelesen wird die kleinste dort genannte Version, was
@@ -86,18 +87,28 @@ try {
 const versionen = daten?.packages?.['nextcloud/ocp'] ?? []
 
 /**
- * PHP-Untergrenze einer ocp-Version: kleinste in require.php genannte x.y.
- * Leerer String, wenn Packagist die Version nicht kennt oder sie kein php
- * fordert — dann wird sie eingeschlossen (s.u.).
+ * PHP-Untergrenze einer ocp-Version aus deren require.php auf Packagist.
+ *
+ * Zwei Nicht-Treffer werden bewusst getrennt:
+ *   { unbekannt: true }            keine passende Version auf Packagist — das
+ *                                  Major ist (noch) nicht erschienen ODER die
+ *                                  Tag-Schreibweise hat sich geaendert. Fehler,
+ *                                  nicht "keine Einschraenkung": sonst faellt
+ *                                  der Filter still auf sein altes, ungefiltertes
+ *                                  Verhalten zurueck — genau der Fall, den er
+ *                                  behebt (aus worktime/vinarium uebernommen).
+ *   { floor: '' }                  gefunden, aber ohne php-Anforderung — das
+ *                                  heisst wirklich "keine Einschraenkung",
+ *                                  die Version wird eingeschlossen.
  */
 function untergrenze(major) {
 	const re = new RegExp(`^v?${major}\\.\\d+\\.\\d+$`)
 	// Packagist listet neueste zuerst; die erste passende ist die aktuellste
 	// vMAJOR.MINOR.PATCH dieses Majors.
 	const treffer = versionen.find((v) => re.test(String(v.version ?? '')))
-	const req = treffer?.require?.php ?? ''
-	const teile = String(req).match(/\d+\.\d+/g) ?? []
-	return teile.sort(vergleich)[0] ?? ''
+	if (!treffer) return { unbekannt: true }
+	const teile = String(treffer.require?.php ?? '').match(/\d+\.\d+/g) ?? []
+	return { floor: teile.sort(vergleich)[0] ?? '' }
 }
 
 /** Vergleicht x.y-Versionen numerisch (nicht als String: 8.10 > 8.9). */
@@ -111,13 +122,15 @@ function vergleich(a, b) {
 const ocp = []
 const uebersprungen = []
 for (let v = min; v <= max; v++) {
-	const floor = untergrenze(v)
-	// Unbekannte Version (floor leer) wird EINGESCHLOSSEN, nicht uebersprungen:
-	// sie scheitert dann laut am composer require, statt lautlos zu verschwinden.
-	if (!floor || vergleich(floor, phpv) <= 0) {
+	const u = untergrenze(v)
+	if (u.unbekannt) {
+		fehler(`Packagist kennt keine Freigabe nextcloud/ocp ${v}.x — PHP-Untergrenze nicht ermittelbar (Tag-Schreibweise geaendert?).`)
+	}
+	// Ohne php-Anforderung (floor leer) laeuft die Version ueberall -> einschliessen.
+	if (!u.floor || vergleich(u.floor, phpv) <= 0) {
 		ocp.push(`^${v}.0`)
 	} else {
-		uebersprungen.push(`^${v}.0 (braucht PHP >= ${floor})`)
+		uebersprungen.push(`^${v}.0 (braucht PHP >= ${u.floor})`)
 	}
 }
 

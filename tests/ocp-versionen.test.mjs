@@ -101,13 +101,36 @@ test('PHP 8.3: NC 35 laeuft gerade noch (floor == PHP)', () => {
 
 // --- Randfaelle aus dem Issue -----------------------------------------------
 
-test('unbekannte ocp-Version wird EINGESCHLOSSEN, nicht uebersprungen', () => {
-	// max-version 99 kennt Packagist nicht -> soll spaeter laut am composer
-	// require scheitern, nicht hier lautlos verschwinden.
-	const { code, stdout } = lauf(app({ min: 34, max: 99 }), { php: '8.5' })
+test('im Bereich liegende, aber Packagist-unbekannte Version -> Exit 1', () => {
+	// max-version 99 kennt Packagist nicht. Das ist ein Fehler, kein "keine
+	// Einschraenkung": sonst faellt der Filter still auf ungefiltert zurueck
+	// (Tag-Schreibweise geaendert?). Uebernommen aus worktime/vinarium.
+	const { code, stderr } = lauf(app({ min: 99, max: 99 }), { php: '8.5' })
+	assert.equal(code, 1)
+	assert.match(stderr, /::error::/)
+	assert.match(stderr, /kennt keine Freigabe nextcloud\/ocp 99\.x/)
+	assert.match(stderr, /Tag-Schreibweise geaendert/)
+})
+
+test('gefunden, aber ohne php-Anforderung -> eingeschlossen', () => {
+	// v40.0.0 steht auf Packagist, fordert aber kein php -> laeuft ueberall.
+	// Das ist NICHT derselbe Fall wie "unbekannt": gefunden heisst gefunden.
+	const p = (php) => ({ require: { php } })
+	const daten = {
+		packages: {
+			'nextcloud/ocp': [
+				{ version: 'v40.0.0' },                 // kein require -> floor leer
+				{ version: 'v39.0.0', ...p('~8.4') },
+			],
+		},
+	}
+	const datei = join(mkdtempSync(join(tmpdir(), 'nc-tooling-pkg-')), 'ocp.json')
+	angelegt.push(dirname(datei))
+	writeFileSync(datei, JSON.stringify(daten))
+
+	const { code, stdout } = lauf(app({ min: 40, max: 40 }), { php: '8.5', fixture: datei })
 	assert.equal(code, 0)
-	assert.match(zeile(stdout, 'ocp'), /\^99\.0/)
-	assert.doesNotMatch(zeile(stdout, 'uebersprungen'), /\^99\.0/)
+	assert.equal(zeile(stdout, 'ocp'), '^40.0')
 })
 
 test('leere Ergebnisliste -> Exit 1 (Matrix und info.xml passen nicht)', () => {

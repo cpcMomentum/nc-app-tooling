@@ -450,7 +450,8 @@ genannte `x.y`), nicht aus einer Tabelle. Verhalten in den Randfällen:
 |---|---|
 | `min`/`max` fehlt in `info.xml` | Exit 1 |
 | Packagist nicht erreichbar | Exit 1 (ein stummer Netzfehler darf nicht als „alles grün" durchgehen) |
-| `ocp`-Version, die Packagist nicht kennt | **eingeschlossen** — scheitert dann laut am `composer require`, statt lautlos zu verschwinden |
+| Version im Bereich, aber auf Packagist **nicht gefunden** | Exit 1 („Tag-Schreibweise geändert?") — nicht als „keine Einschränkung" verkleiden, sonst fällt der Filter still auf ungefiltert zurück |
+| Version gefunden, aber **ohne** `php`-Anforderung | eingeschlossen (läuft überall) |
 | keine Version läuft auf diesem PHP | Exit 1 (Matrix und `info.xml` passen nicht zusammen) |
 
 Für Tests liest die Action die Packagist-Antwort per `OCP_PACKAGIST_FILE` aus
