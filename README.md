@@ -402,6 +402,48 @@ jobs:
       #   grün → PR, der max-version hebt · rot → Issue mit Log (idempotent)
 ```
 
+## `nc-whatsnew-check`
+
+Prüft den **Aufbau** der `whatsnew/whatsnew.json` des „Was ist neu?"-Fensters
+(Baustein 0b) — dieselben Regeln, die `nc-release-check` beim Release anlegt
+(`bin/whatsnew-regeln.mjs`, nc-app-tooling#27).
+
+```bash
+npx nc-whatsnew-check          # im Wurzelverzeichnis der App
+```
+
+```jsonc
+// package.json der App
+"scripts": {
+    "whatsnew:check": "nc-whatsnew-check"
+}
+```
+
+Bis v1.16.0 lag diese Prüfung als PHPUnit-Test (`testDieAusgelieferteDateiIstGueltig`)
+in jeder App einzeln. Geprüft wird universell:
+
+- jeder Versionsschlüssel ist `x.y.z`
+- jeder Eintrag hat `title` und `text`, je mit **`de` und `en`** (nicht leer)
+- `where` ist optional, aber wenn da, dann zweisprachig
+- `plus` ist optional (je App Pflicht **oder** verboten — vinarium etwa verbietet
+  es); wenn vorhanden, muss es `true`/`false` sein
+
+**Bewusst app-spezifisch und deshalb nicht hier:** die Icon-Whitelist (kennt nur
+`WhatsNewDialog.vue`) und ob `plus` Pflicht oder verboten ist. Solche Regeln
+bleiben als schlanke Prüfung in der App.
+
+**Bewusst keine Versionsprüfung** („Schlüssel == Release-Version"): in der
+App-CI wäre sie zwischen Feature-Merge und Version-Bump zwangsläufig rot — der
+Eintrag wird ja *für* das kommende Release gepflegt. Diese Frage beantwortet
+`nc-release-check` zum Release-Zeitpunkt, wenn die Version feststeht (Check 16):
+Schlüssel für die Release-Version da → grün, keiner → Warnung mit Quittung, ein
+Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
+| 1 | Schema-Fehler oder kaputtes JSON |
+
 ## Composite Action `ocp-versionen`
 
 Leitet die zu testenden `nextcloud/ocp`-Versionen aus `appinfo/info.xml` ab und

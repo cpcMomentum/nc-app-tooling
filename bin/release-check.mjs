@@ -27,6 +27,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import { APPINFO_ERLAUBT, WHITELIST } from './release-regeln.mjs'
+import { pruefeSchema, versionsBefund } from './whatsnew-regeln.mjs'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
@@ -196,6 +197,44 @@ try {
 		}
 		schaden.length ? fail(15, 'Packaging-Guard', 'Pflicht-Artefakte fehlen im Tarball:', schaden)
 			: ok(15, 'Packaging-Guard (CSS + vendor-Runtime)')
+	}
+
+	// --- 16: whatsnew.json (Schema + Version passt zum Release) --------------
+	// „Was ist neu?"-Fenster (Baustein 0b). Nur wenn die App das Fenster
+	// mitbringt. Regeln aus whatsnew-regeln.mjs — dieselbe Quelle, die
+	// nc-whatsnew-check in der App-CI anlegt (nc-app-tooling#27).
+	{
+		const wn = join(wurzel, 'whatsnew/whatsnew.json')
+		if (existsSync(wn)) {
+			let katalog = null
+			try {
+				katalog = JSON.parse(readFileSync(wn, 'utf8'))
+			} catch (e) {
+				fail(16, 'whatsnew.json Schema', `kein gueltiges JSON: ${e.message}`)
+			}
+			if (katalog !== null) {
+				const schemaFehler = pruefeSchema(katalog)
+				schemaFehler.length
+					? fail(16, 'whatsnew.json Schema', 'Aufbau ungueltig:', schemaFehler)
+					: ok(16, 'whatsnew.json Schema')
+
+				// Version-vs-Release nur, wenn das Schema traegt (sonst koennten
+				// die Schluessel Muell sein). Release-Version aus dem info.xml DES
+				// TARBALLS — das ist die ausgelieferte Version.
+				if (!schemaFehler.length) {
+					const infoXml = readFileSync(join(wurzel, 'appinfo/info.xml'), 'utf8')
+					const version = infoXml.match(/<version>\s*([^<\s]+)\s*<\/version>/)?.[1]
+					if (!version) {
+						fail(16, 'whatsnew.json Version', 'keine <version> in appinfo/info.xml — Release-Version nicht bestimmbar')
+					} else {
+						const b = versionsBefund(katalog, version)
+						if (b.art === 'grün') ok(16, `whatsnew.json Version (${b.text})`)
+						else if (b.art === 'warnung') warn(16, 'whatsnew.json Version', b.text)
+						else fail(16, 'whatsnew.json Version', b.text)
+					}
+				}
+			}
+		}
 	}
 } finally {
 	if (tmp) rmSync(tmp, { recursive: true, force: true })
