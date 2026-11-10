@@ -118,6 +118,13 @@ Pronomen, Imperative wie „Wähle“ / „Wählen Sie“ bleiben dem Review):
   ```
 
   In `de_DE` bleibt der Text dann ebenfalls beim „Sie“.
+- **Imperative ohne Pronomen** („Lege … an“, „Bitte versuche es erneut“) gibt
+  es nur als Hinweis, und nur solange der `de_DE`-Eintrag noch gleich der
+  Quelle ist. Erkannt werden Verben aus einer festen Liste: am Satzanfang groß,
+  mitten im Satz (nach „Bitte“, Komma, Gedankenstrich, „und/oder/dann“) klein.
+  Großes „Versuche“ mitten im Satz ist ein Nomen, „Frage“, „Stelle“, „Lade“
+  und „Versuche“ am Satzanfang ebenfalls. Im Pilot rechnungswerk waren 14 von
+  30 Anrede-Fällen reine Imperative.
 
 Umstellung einer App, in dieser Reihenfolge:
 

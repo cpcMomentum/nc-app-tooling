@@ -153,3 +153,60 @@ test('Marker zwei Zeilen ueber dem Aufruf zaehlt nicht', () => {
 	assert.equal(r.code, 1, r.ausgabe)
 	assert.match(r.ausgabe, /siezen/)
 })
+
+const IMPERATIV_TREFFER = [
+	'Bitte bewahre ihn sicher auf. Er ist hinterlegt, wird aber nur jetzt vollständig angezeigt.',
+	'Bitte bewahre ihn sicher auf. Er wird nie wieder angezeigt.',
+	'Bitte gib einen gültigen WerkPlus-Schlüssel ein.',
+	'Bitte wähle eine gültige Größenklasse.',
+	'Der gespeicherte Lizenznachweis ist ungültig. Bitte prüfe die Lizenz erneut.',
+	'Die Anfrage an WerkPlus war fehlerhaft. Bitte melde den Fehler dem Anbieter.',
+	'Dieser Schlüssel ist nicht bekannt. Bitte prüfe die Schreibweise.',
+	'Lege fest, wer RechnungsWerk nutzen darf. Nextcloud-Server-Administratoren sind immer Admin.',
+	'Lege wiederkehrende Einleitungs- und Schlusstexte an, um sie schnell in Dokumente zu übernehmen.',
+	'Tippe einen Namen (mind. 2 Zeichen), um Nutzer oder Gruppen zu finden.',
+	'WerkPlus hat einen Fehler gemeldet. Bitte versuche es später erneut.',
+	'WerkPlus ist gerade nicht erreichbar. Bitte versuche es später erneut.',
+	'Zu viele Versuche. Bitte versuche es später erneut.',
+	'Mit eigenem Konto gehen Rechnungs-Mails über diesen Server – nutze ein Konto, das die Absenderadresse besitzt.',
+]
+const IMPERATIV_KEINE = [
+	'Bitte aus der Liste wählen.',
+	'Bitte eine gültige E-Mail-Adresse angeben.',
+	'Zu viele Versuche.',
+	'Frage löschen?',
+	'Diese Rechnung ist festgeschrieben.',
+	'Keine Kunden vorhanden.',
+	'Neue Rechnung',
+]
+
+test('Imperativ ohne Pronomen: Hinweis fuer alle Pilot-Treffer, nicht blockierend', () => {
+	const alle = [...IMPERATIV_TREFFER, ...IMPERATIV_KEINE]
+	const app = formalApp({ 'src/App.vue': alle.map((s) => `t('testapp', '${s}')`).join('\n') + '\n' }, alle)
+	const r = lauf('l10n-check.mjs', app)
+	assert.equal(r.code, 0, r.ausgabe)
+	assert.match(r.ausgabe, new RegExp(`de_DE: ${IMPERATIV_TREFFER.length} Eintrag/Eintraege wirken wie Imperativ`))
+})
+
+test('Imperativ: kein Hinweis bei Fehlalarm-Kandidaten, umgestelltem de_DE oder Marker', () => {
+	const umgestellt = 'Bitte prüfe die Schreibweise.'
+	const markiert = 'Lege den Kunden an.'
+	const app = formalApp({
+		'src/App.vue': [...IMPERATIV_KEINE, umgestellt].map((s) => `t('testapp', '${s}')`).join('\n')
+			+ `\n// TRANSLATORS: formal\nt('testapp', '${markiert}')\n`,
+	}, [...IMPERATIV_KEINE, umgestellt, markiert])
+	const map = JSON.parse(lies(app, 'de_DE.json')).translations
+	map[umgestellt] = 'Bitte prüfen Sie die Schreibweise.'
+	const { js, json } = katalog(map)
+	writeFileSync(join(app, 'l10n', 'de_DE.js'), js)
+	writeFileSync(join(app, 'l10n', 'de_DE.json'), json)
+	const r = lauf('l10n-check.mjs', app)
+	assert.equal(r.code, 0, r.ausgabe)
+	assert.doesNotMatch(r.ausgabe, /wirken wie Imperativ/)
+})
+
+test('Imperativ nach und/oder/dann wird erkannt', () => {
+	const text = 'Der Export ist fertig oder kopiere den Link aus der Liste.'
+	const app = formalApp({ 'src/App.vue': `t('testapp', '${text}')\n` }, [text])
+	assert.match(lauf('l10n-check.mjs', app).ausgabe, /de_DE: 1 Eintrag\/Eintraege wirken wie Imperativ/)
+})

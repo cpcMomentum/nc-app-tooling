@@ -53,6 +53,19 @@ const DU_WORDS = /\b(du|dich|dir|dein|deine|deinem|deinen|deiner|deines)\b/i
 const SIE_WORDS = /\b(Sie|Ihnen|Ihr|Ihre|Ihrem|Ihren|Ihrer|Ihres)\b/g
 // Am Satzanfang kann "Sie"/"Ihr" auch 3. Person sein: dort nur Hinweis.
 const SENTENCE_START = /(^|[.!?:;„"“(\n]\s*)$/
+// Imperative ohne Pronomen ("Lege … an"): nur Hinweis, feste Liste statt Endung -e.
+const IMPERATIVES = ['achte', 'aktiviere', 'ändere', 'beachte', 'behalte', 'bestätige', 'bewahre', 'entferne',
+	'ergänze', 'erstelle', 'exportiere', 'frage', 'füge', 'gehe', 'gib', 'hilf', 'hinterlege', 'importiere',
+	'klicke', 'kontrolliere', 'kopiere', 'lade', 'lege', 'lies', 'markiere', 'melde', 'nimm', 'nutze', 'öffne',
+	'passe', 'prüfe', 'richte', 'schau', 'schreibe', 'sende', 'setze', 'sieh', 'speichere', 'starte', 'stelle',
+	'tippe', 'trage', 'übernimm', 'verwende', 'versuche', 'warte', 'wechsle', 'wende', 'wiederhole', 'wirf',
+	'wähle', 'ziehe']
+// Am Satzanfang auch Nomen ("Frage löschen?"): dort nicht werten.
+const IMPERATIVE_NOUNS = new Set(['frage', 'lade', 'stelle', 'versuche'])
+const cap = (w) => w[0].toUpperCase() + w.slice(1)
+const IMP_START = new RegExp(`(?:^|[.!?:;„“"(]\\s*)(${IMPERATIVES.filter((w) => !IMPERATIVE_NOUNS.has(w)).map(cap).join('|')})(?!\\p{L})`, 'u')
+// Mitten im Satz nur klein geschrieben: grosses "Versuche" ist dort ein Nomen.
+const IMP_MID = new RegExp(`(?:\\bBitte\\s+|\\b(?:dann|und|oder)\\s+|[,–—]\\s*)(${IMPERATIVES.join('|')})(?!\\p{L})`, 'u')
 
 // Quellen der uebersetzbaren Strings. Frontend .ts gehoert dazu: die aelteren
 // Apps sind Vue 2, die neueren Vue 3 mit TypeScript. Fehlt die Endung, waere ein
@@ -358,6 +371,14 @@ function checkAddress(canonical, formal) {
 	if (sieStart.length) {
 		info.push(`${SOURCE_LANG}: ${sieStart.length} Quelltext(e) beginnen mit "Sie"/"Ihr" — bitte pruefen, `
 			+ `ob foermliche Anrede (dann umstellen) oder 3. Person:\n${sample(sieStart)}`)
+	}
+
+	const imperative = Object.keys(formal).filter((k) => !FORMAL_KEYS.has(k) && canonical.has(k)
+		&& sameValue(formal[k], sourceValue(k))
+		&& [].concat(sourceValue(k)).some((t) => IMP_START.test(t) || IMP_MID.test(t)))
+	if (imperative.length) {
+		info.push(`${FORMAL_LANG}: ${imperative.length} Eintrag/Eintraege wirken wie Imperativ ohne Pronomen `
+			+ `("Lege … an") und sind noch gleich der Quelle — Sie-Form pruefen:\n${sample(imperative)}`)
 	}
 	return { problems, info }
 }
