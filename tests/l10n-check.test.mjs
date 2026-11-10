@@ -120,3 +120,36 @@ test('Plural: "Sie" am Anfang beider Formen ist nur ein Hinweis', () => {
 	assert.equal(r.code, 0, r.ausgabe)
 	assert.match(r.ausgabe, /beginnen mit "Sie"\/"Ihr"/)
 })
+
+function formalApp(dateien, quelle) {
+	const app = l10nApp({ quelle: [], en: {} })
+	rmSync(join(app, 'src', 'App.vue'))
+	for (const [pfad, inhalt] of Object.entries(dateien)) schreibe(app, pfad, inhalt)
+	const map = Object.fromEntries(quelle.map((s) => [s, s]))
+	for (const lang of ['de', 'en', 'de_DE']) {
+		const { js, json } = katalog(map)
+		writeFileSync(join(app, 'l10n', `${lang}.js`), js)
+		writeFileSync(join(app, 'l10n', `${lang}.json`), json)
+	}
+	return app
+}
+
+test('TRANSLATORS: formal nimmt Kundentexte von der Sie-Pruefung aus (Zeile davor, gleiche Zeile, PHP)', () => {
+	const app = formalApp({
+		'src/Mail.vue': "// TRANSLATORS: formal\nconst a = t('testapp', 'anbei erhalten Sie Ihre Rechnung.')\n"
+			+ "const b = t('testapp', 'Ihre Rechnung') // TRANSLATORS: formal\n",
+		'lib/Mail.php': "<?php\n/* TRANSLATORS: formal */\n$this->l->t('wir danken Ihnen für Ihren Auftrag.');\n",
+	}, ['anbei erhalten Sie Ihre Rechnung.', 'Ihre Rechnung', 'wir danken Ihnen für Ihren Auftrag.'])
+	const r = lauf('l10n-check.mjs', app)
+	assert.equal(r.code, 0, r.ausgabe)
+	assert.doesNotMatch(r.ausgabe, /siezen|beginnen mit "Sie"/)
+})
+
+test('Marker zwei Zeilen ueber dem Aufruf zaehlt nicht', () => {
+	const app = formalApp({
+		'src/Mail.vue': "// TRANSLATORS: formal\n\nconst a = t('testapp', 'anbei erhalten Sie Ihre Rechnung.')\n",
+	}, ['anbei erhalten Sie Ihre Rechnung.'])
+	const r = lauf('l10n-check.mjs', app)
+	assert.equal(r.code, 1, r.ausgabe)
+	assert.match(r.ausgabe, /siezen/)
+})

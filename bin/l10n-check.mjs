@@ -239,15 +239,31 @@ function readConcatenatedLiteral(code, pos) {
 	return parts.length ? { value: parts.join(''), end: i } : null
 }
 
+// Bewusst siezende Texte an Dritte (z.B. Mail an Kunden), Marker am Aufruf.
+const FORMAL_MARK = /TRANSLATORS:\s*formal\b/
+const FORMAL_KEYS = new Set()
+
+/** Marker in der Zeile des Aufrufs oder direkt davor. */
+function markedFormal(code, index) {
+	const lineStart = code.lastIndexOf('\n', index - 1) + 1
+	const prevStart = lineStart > 0 ? code.lastIndexOf('\n', lineStart - 2) + 1 : 0
+	const lineEnd = code.indexOf('\n', index)
+	return FORMAL_MARK.test(code.slice(prevStart, lineEnd === -1 ? code.length : lineEnd))
+}
+
 function extractCanonicalKeys() {
 	const keys = new Set()
+	const add = (key, code, index) => {
+		keys.add(key)
+		if (markedFormal(code, index)) FORMAL_KEYS.add(key)
+	}
 	for (const base of FRONTEND_DIRS) {
 		for (const file of filesUnder(join(ROOT, base), FRONTEND_EXT)) {
 			if (IS_TEST.test(file)) continue // Teststrings gehoeren nicht in den Katalog
 			const code = readFileSync(file, 'utf8')
-			for (const m of code.matchAll(T_FRONTEND)) keys.add(unescapeQuoted(m[1], "'"))
+			for (const m of code.matchAll(T_FRONTEND)) add(unescapeQuoted(m[1], "'"), code, m.index)
 			for (const m of code.matchAll(N_FRONTEND)) {
-				keys.add(pluralKey(unescapeQuoted(m[1], "'"), unescapeQuoted(m[2], "'")))
+				add(pluralKey(unescapeQuoted(m[1], "'"), unescapeQuoted(m[2], "'")), code, m.index)
 			}
 		}
 	}
@@ -259,12 +275,12 @@ function extractCanonicalKeys() {
 			for (const m of code.matchAll(/->(t|n)\(/g)) {
 				const erst = readConcatenatedLiteral(code, m.index + m[0].length)
 				if (!erst) continue
-				if (m[1] === 't') { keys.add(erst.value); continue }
+				if (m[1] === 't') { add(erst.value, code, m.index); continue }
 				let i = erst.end
 				while (i < code.length && /\s/.test(code[i])) i++
 				if (code[i] !== ',') continue
 				const zweit = readConcatenatedLiteral(code, i + 1)
-				if (zweit) keys.add(pluralKey(erst.value, zweit.value))
+				if (zweit) add(pluralKey(erst.value, zweit.value), code, m.index)
 			}
 		}
 	}
@@ -329,6 +345,7 @@ function checkAddress(canonical, formal) {
 	const sieMid = []
 	const sieStart = []
 	for (const k of canonical) {
+		if (FORMAL_KEYS.has(k)) continue
 		const hits = [].concat(sourceValue(k)).flatMap((text) =>
 			[...text.matchAll(SIE_WORDS)].map((m) => SENTENCE_START.test(text.slice(0, m.index))))
 		if (hits.includes(false)) sieMid.push(k)
