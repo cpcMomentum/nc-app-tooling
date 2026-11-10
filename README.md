@@ -77,6 +77,47 @@ Monate lang englisch in einer deutschen Oberfläche.
 **Reihenfolge beachten:** Erst die Quellstrings richtigstellen, dann `--fix`.
 Umgekehrt überschreibt der Fix vorhandene Übersetzungen mit dem Schlüssel.
 
+### Regionale Varianten: `en_GB` und `de_DE`
+
+Nextcloud nimmt die eingestellte Sprache nur, wenn die App für **genau diesen
+Code** einen Katalog hat (`OC\L10N\Factory::findLanguage`). Einen Rückfall von
+`en_GB` auf `en` gibt es nur für die Browsersprache. Ohne eigenen Katalog sieht
+ein Nutzer mit „English (UK)“ und deutschem Browser die App deutsch
+(worktime#814, nc-app-tooling#37).
+
+| Katalog | Anrede | Pflege |
+|---|---|---|
+| `de` (Quelle) | du | Quelltext im Code, Wert == Schlüssel |
+| `de_DE` | Sie | gepflegt; weicht nur bei Texten mit Anrede ab |
+| `en_GB` | – | exakte Kopie von `en`, schreibt `--fix` |
+
+Andere regionale Codes aus `core/l10n` haben bei uns keinen Grundkatalog.
+
+```bash
+npm run l10n:fix                  # legt en_GB an / hält es gleich mit en
+npx nc-l10n-check --add-de_DE     # einmalig: de_DE als Kopie von de anlegen
+```
+
+Eingeschaltet wird über die Datei, nicht über einen Schalter. Fehlt sie, gibt
+es nur einen Hinweis. Ein Tooling-Bump bleibt so in jeder App grün, die
+Umstellung passiert im eigenen PR der App.
+
+Sobald `l10n/de_DE.json` existiert, prüft der Wächter die Anrede (nur
+Pronomen, Imperative wie „Wähle“ / „Wählen Sie“ bleiben dem Review):
+
+- du-Formen in `de_DE` blockieren.
+- Sie-Formen mitten im Quelltext blockieren. Am Satzanfang kann „Sie“/„Ihr“
+  auch 3. Person sein („Sie bleibt sichtbar“), dort gibt es nur einen Hinweis.
+
+Umstellung einer App, in dieser Reihenfolge:
+
+1. `--add-de_DE` **zuerst**: so stehen die bisherigen Sie-Texte schon in `de_DE`.
+2. Quelltexte mit Anrede im Code auf „du“ umstellen.
+3. In **allen** Katalogen (`de_DE`, `en`, …) die alten Schlüssel auf die neuen
+   umhängen, die Werte behalten. Erst danach `--fix`, sonst löscht er die alten
+   Schlüssel samt Übersetzung als tot.
+4. `npx nc-l10n-check` listet, was in `de_DE` noch duzt.
+
 ### Im Pre-Commit-Hook
 
 Der Auslöser hängt am **Code**, nicht an den l10n-Dateien. Das ist der Punkt:
