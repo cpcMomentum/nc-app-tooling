@@ -108,6 +108,16 @@ Pronomen, Imperative wie „Wähle“ / „Wählen Sie“ bleiben dem Review):
 - du-Formen in `de_DE` blockieren.
 - Sie-Formen mitten im Quelltext blockieren. Am Satzanfang kann „Sie“/„Ihr“
   auch 3. Person sein („Sie bleibt sichtbar“), dort gibt es nur einen Hinweis.
+- Texte an **Dritte**, die bewusst siezen (etwa die vorbelegte Rechnungsmail an
+  den Kunden des Nutzers), markiert man am Aufruf. Der Marker gehört in dieselbe
+  Zeile oder in die Zeile direkt davor, die Kommentar-Syntax ist egal:
+
+  ```js
+  // TRANSLATORS: formal
+  t('rechnungswerk', 'anbei erhalten Sie Ihre Rechnung.')
+  ```
+
+  In `de_DE` bleibt der Text dann ebenfalls beim „Sie“.
 
 Umstellung einer App, in dieser Reihenfolge:
 
