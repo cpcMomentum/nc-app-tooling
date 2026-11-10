@@ -18,8 +18,9 @@
  * gruen, waehrend Backend-Meldungen unuebersetzt ausgeliefert werden — genau so
  * blieben 29 Meldungen fuenf Monate unentdeckt.
  *
- *   npx nc-l10n-check          → pruefen (Exit 1 bei struktureller Drift)
- *   npx nc-l10n-check --fix    → Kataloge aus dem Code regenerieren
+ *   npx nc-l10n-check              → pruefen (Exit 1 bei struktureller Drift)
+ *   npx nc-l10n-check --fix        → Kataloge aus dem Code regenerieren
+ *   npx nc-l10n-check --add-de_DE  → wie --fix, legt zusaetzlich l10n/de_DE an
  *
  * Laeuft im Wurzelverzeichnis der App (cwd). Alles Weitere wird erkannt:
  * die App-ID aus appinfo/info.xml, die Sprachen aus den vorhandenen
@@ -35,12 +36,23 @@ import { runInNewContext } from 'node:vm'
 
 const ROOT = process.cwd()
 const L10N_DIR = join(ROOT, 'l10n')
-const FIX = process.argv.includes('--fix')
+const ADD_FORMAL = process.argv.includes('--add-de_DE')
+const FIX = ADD_FORMAL || process.argv.includes('--fix')
 
 // Quellsprache. Alle Apps der Flotte schreiben deutsche Quellstrings; in dieser
 // Sprache gilt Wert == Key. Ein englischer Quellstring in einer deutschen App
 // sieht uebersetzt aus, ist es aber nicht.
 const SOURCE_LANG = 'de'
+
+// NC nimmt die Nutzersprache nur bei exaktem Katalog, ohne Rueckfall en_GB → en.
+const COPY_VARIANTS = { en_GB: 'en' }
+// NC: de = "Du", de_DE = "Sie". Gepflegt, weicht nur bei Anrede von der Quelle ab.
+const FORMAL_LANG = 'de_DE'
+// Nur Pronomen; Imperative ("Waehle" / "Waehlen Sie") sind per Regex nicht sicher.
+const DU_WORDS = /\b(du|dich|dir|dein|deine|deinem|deinen|deiner|deines)\b/i
+const SIE_WORDS = /\b(Sie|Ihnen|Ihr|Ihre|Ihrem|Ihren|Ihrer|Ihres)\b/g
+// Am Satzanfang kann "Sie"/"Ihr" auch 3. Person sein: dort nur Hinweis.
+const SENTENCE_START = /(^|[.!?:;„"“(\n]\s*)$/
 
 // Quellen der uebersetzbaren Strings. Frontend .ts gehoert dazu: die aelteren
 // Apps sind Vue 2, die neueren Vue 3 mit TypeScript. Fehlt die Endung, waere ein
@@ -296,6 +308,43 @@ function writeJson(lang, translations, pluralForm) {
 
 const diff = (a, b) => [...a].filter((x) => !b.has(x))
 
+/** Sprachen, die von Hand uebersetzt werden: ohne Quelle und ohne Kopien. */
+const maintainedLangs = (langs) => langs.filter((l) => l !== SOURCE_LANG && !(l in COPY_VARIANTS))
+
+const flat = (v) => (Array.isArray(v) ? v.join(' ') : v)
+const sample = (keys) => keys.slice(0, 5).map((k) => `      ${JSON.stringify(k)}`).join('\n')
+	+ (keys.length > 5 ? `\n      … und ${keys.length - 5} weitere` : '')
+
+/** du-Formen in de_DE und Sie-Formen in der Quelle. */
+function checkAddress(canonical, formal) {
+	const problems = []
+	const info = []
+
+	const duInFormal = Object.keys(formal).filter((k) => DU_WORDS.test(flat(formal[k])))
+	if (duInFormal.length) {
+		problems.push(`${FORMAL_LANG}: ${duInFormal.length} Eintrag/Eintraege duzen — dort gehoert "Sie" hin:\n`
+			+ sample(duInFormal))
+	}
+
+	const sieMid = []
+	const sieStart = []
+	for (const k of canonical) {
+		const hits = [].concat(sourceValue(k)).flatMap((text) =>
+			[...text.matchAll(SIE_WORDS)].map((m) => SENTENCE_START.test(text.slice(0, m.index))))
+		if (hits.includes(false)) sieMid.push(k)
+		else if (hits.length) sieStart.push(k)
+	}
+	if (sieMid.length) {
+		problems.push(`${SOURCE_LANG}: ${sieMid.length} Quelltext(e) siezen — die Quelle duzt, "Sie" gehoert nach ${FORMAL_LANG}:\n`
+			+ sample(sieMid))
+	}
+	if (sieStart.length) {
+		info.push(`${SOURCE_LANG}: ${sieStart.length} Quelltext(e) beginnen mit "Sie"/"Ihr" — bitte pruefen, `
+			+ `ob foermliche Anrede (dann umstellen) oder 3. Person:\n${sample(sieStart)}`)
+	}
+	return { problems, info }
+}
+
 function main() {
 	const canonical = extractCanonicalKeys()
 	const dynamic = findDynamicCalls()
@@ -337,7 +386,7 @@ function main() {
 			else problems.push(msg)
 		}
 		// (d) Hinweis, nicht blockierend: noch unuebersetzt
-		if (lang !== SOURCE_LANG) {
+		if (lang !== SOURCE_LANG && lang !== FORMAL_LANG && !(lang in COPY_VARIANTS)) {
 			const untranslated = [...jsonKeys].filter((k) => canonical.has(k)
 				&& sameValue(json.translations[k], sourceValue(k)))
 			if (untranslated.length) {
@@ -366,6 +415,25 @@ function main() {
 		}
 	}
 
+	// (f) Regionale Varianten: Kopie aktuell, foermliche Anrede getrennt
+	for (const [variant, base] of Object.entries(COPY_VARIANTS)) {
+		if (!LANGS.includes(base)) continue
+		if (!LANGS.includes(variant)) {
+			info.push(`${variant} fehlt — Nutzer mit dieser Sprache sehen die App in der Browsersprache. `
+				+ `--fix legt ihn als Kopie von ${base} an.`)
+		} else if (!sameValue(catalogs[variant].json, catalogs[base].json)) {
+			problems.push(`${variant}: weicht von ${base} ab — muss eine exakte Kopie sein, --fix gleicht an`)
+		}
+	}
+	if (!LANGS.includes(FORMAL_LANG)) {
+		info.push(`${FORMAL_LANG} fehlt — Nutzer mit "Deutsch (Foermlich: Sie)" sehen die App in der `
+			+ 'Browsersprache. --add-de_DE legt ihn an.')
+	} else {
+		const anrede = checkAddress(canonical, catalogs[FORMAL_LANG].json.translations)
+		problems.push(...anrede.problems)
+		info.push(...anrede.info)
+	}
+
 	console.log(dim(`${APP_ID}: ${canonical.size} eindeutige Keys aus src/, lib/, templates/, appinfo/ `
 		+ `— Sprachen: ${LANGS.join(', ')}`))
 
@@ -386,7 +454,7 @@ function main() {
 
 	console.log(red(`\n✗ ${problems.length} Konsistenz-Problem(e):`))
 	for (const p of problems) console.log(red('  • ' + p))
-	const others = LANGS.filter((l) => l !== SOURCE_LANG).join(',')
+	const others = maintainedLangs(LANGS).join(',')
 	console.log(dim('\n  Beheben:  npx nc-l10n-check --fix   (regeneriert die Kataloge aus dem Code)'))
 	if (others) console.log(dim(`  Danach die neuen Keys in l10n/{${others}}.{js,json} uebersetzen.`))
 	process.exit(1)
@@ -407,7 +475,18 @@ function applyFix(canonical, catalogs, dynamic) {
 		console.log(yellow(`  ⚐ ${dynamic.length} dynamische(r) Aufruf(e): es wird nur ergaenzt, nichts entfernt.`))
 	}
 
-	for (const lang of LANGS) {
+	const langs = LANGS.filter((l) => !(l in COPY_VARIANTS && LANGS.includes(COPY_VARIANTS[l])))
+	if (ADD_FORMAL && !langs.includes(FORMAL_LANG)) {
+		const src = catalogs[SOURCE_LANG]
+		catalogs[FORMAL_LANG] = {
+			js: { map: { ...src.js.map }, plural: src.js.plural },
+			json: { translations: { ...src.json.translations }, pluralForm: src.json.pluralForm },
+		}
+		langs.push(FORMAL_LANG)
+	}
+	const written = {}
+
+	for (const lang of langs) {
 		const { js, json } = catalogs[lang]
 		const existing = json.translations
 		const existingOrder = Object.keys(existing).filter((k) => keepAll || canonical.has(k))
@@ -427,14 +506,32 @@ function applyFix(canonical, catalogs, dynamic) {
 		if (JSON.stringify(existing) !== JSON.stringify(map)
 			|| Object.keys(js.map).length !== orderedKeys.length) changed++
 
-		writeJs(lang, map, js.plural || json.pluralForm)
-		writeJson(lang, map, json.pluralForm || js.plural)
+		const plural = js.plural || json.pluralForm
+		const pluralForm = json.pluralForm || js.plural
+		writeJs(lang, map, plural)
+		writeJson(lang, map, pluralForm)
+		written[lang] = { map, plural, pluralForm }
 
 		const removed = keepAll ? 0 : Object.keys(existing).filter((k) => !canonical.has(k)).length
 		console.log(`  ${lang}: ${green(`+${newKeys.length}`)} neu, ${red(`-${removed}`)} tot, ${orderedKeys.length} gesamt`)
 	}
 
-	const others = LANGS.filter((l) => l !== SOURCE_LANG).join('/')
+	for (const [variant, base] of Object.entries(COPY_VARIANTS)) {
+		if (!written[base]) continue
+		const { map, plural, pluralForm } = written[base]
+		const old = catalogs[variant]?.json
+		if (!old || !sameValue(old, { translations: map, pluralForm })) changed++
+		writeJs(variant, map, plural)
+		writeJson(variant, map, pluralForm)
+		console.log(`  ${variant}: Kopie von ${base}${old ? '' : green(' (neu angelegt)')}`)
+	}
+
+	if (ADD_FORMAL && !LANGS.includes(FORMAL_LANG)) {
+		console.log(yellow(`\n  ${FORMAL_LANG} angelegt als Kopie von ${SOURCE_LANG}. Jetzt die Texte mit Anrede dort auf "Sie"`
+			+ ' umstellen — npx nc-l10n-check listet sie auf.'))
+	}
+
+	const others = maintainedLangs(langs).join('/')
 	console.log(changed
 		? green(`\n✓ Kataloge regeneriert.${others ? ` Bitte neue Keys in ${others} uebersetzen und committen.` : ''}`)
 		: green('\n✓ Bereits konsistent — nichts zu tun.'))
