@@ -424,8 +424,9 @@ Nextcloud released 2×/Jahr ein neues Major. Die `max-version` von Hand
 nachzuziehen ist leicht vergessen — und ein Bump ohne Test ist eine ungeprüfte
 Zusage (nc-app-tooling#17, aus #13). Dieses Werkzeug sagt nur, **ob** ein neues
 Major da ist und **welches**; der Workflow drumherum testet die App gegen dessen
-`nextcloud/ocp`-Stubs und macht daraus einen **PR** (grün, hebt `max-version`)
-oder ein **Issue** (rot, mit Log). So wird die Zusage geprüft, nicht geraten.
+`nextcloud/ocp`-Stubs und macht daraus einen **Branch mit Issue** (grün, hebt
+`max-version`) oder ein **Issue** (rot, mit Log). So wird die Zusage geprüft,
+nicht geraten.
 
 Quelle der neuesten NC-Version sind die `nextcloud/ocp`-Releases auf Packagist —
 genau das Paket, gegen dessen Stubs getestet wird. Stabile Releases sind
@@ -448,25 +449,68 @@ constraint=     (leer)   oder  constraint=^35.0
 
 ### Der Workflow drumherum
 
-Geplant (wöchentlich) plus `workflow_dispatch`. Läuft nur vom **Default-Branch**.
-Echte Arbeit nur, wenn `neu` gesetzt ist:
+Der Ablauf liegt als wiederverwendbarer Workflow in diesem Repo
+(`.github/workflows/nc-compat.yml`), genau wie `canary.yml`. Die App behält nur
+Auslöser, Rechte und Concurrency:
 
 ```yaml
+name: nc-compat
+
 on:
-  schedule: [{ cron: '17 6 * * 1' }]   # Montag früh
+  schedule:
+    - cron: '17 6 * * 1'   # Montag früh (UTC)
   workflow_dispatch:
+    inputs:
+      simuliere_nc:
+        description: 'Test: NC-Major erzwingen (z.B. 36). Leer = echt via Packagist.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: nc-compat
+  cancel-in-progress: false
+
 jobs:
   compat:
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm ci
-      - id: detect
-        run: npx nc-compat-check
-      # ab hier nur, wenn steps.detect.outputs.neu != '':
-      # composer require nextcloud/ocp:${{ steps.detect.outputs.constraint }} + phpunit
-      #   grün → PR, der max-version hebt · rot → Issue mit Log (idempotent)
+    uses: cpcMomentum/nc-app-tooling/.github/workflows/nc-compat.yml@v1.21.0
+    with:
+      simuliere-nc: ${{ github.event.inputs.simuliere_nc }}
 ```
+
+GitHub startet `schedule` nur vom **Default-Branch**. Echte Arbeit gibt es nur,
+wenn `neu` gesetzt ist:
+
+| Ausgang des Tests | Was der Lauf anlegt |
+|---|---|
+| grün | Branch `chore/nc-compat-N` (ändert nur `max-version` in `info.xml`) und ein Issue „max-version auf NC N heben (geprüft)" mit dem Link, der den PR öffnet |
+| rot | Issue „Kompatibilitaet mit NC N pruefen" mit Verweis aufs Log |
+
+Beides ist idempotent: Ein bestehender Branch wird nicht angefasst, ein offenes
+Issue mit demselben Titel nicht doppelt angelegt. Der Commit auf dem Branch
+trägt `Fixes #<Issue>`.
+
+**Warum grün keinen fertigen PR anlegt.** Die Organisation `cpcMomentum` erlaubt
+GitHub Actions nicht, PRs zu erstellen (Org-Einstellung „Allow GitHub Actions to
+create and approve pull requests" ist aus, auf Repo-Ebene nicht überschreibbar).
+Bis v1.20.0 rief der Grün-Zweig `gh pr create` auf und scheiterte daran in jeder
+App: Der Lauf wurde rot, obwohl der Test grün war (nc-app-tooling#33). Einen
+Branch pushen und ein Issue anlegen darf das `GITHUB_TOKEN`. Den PR öffnet ein
+Mensch über den Link im Issue. Das hat einen Vorteil: Für PRs des
+`GITHUB_TOKEN` startet GitHub keine Folge-Workflows, für einen von Hand
+geöffneten PR läuft `phpunit` normal an.
+
+| Eingabe | Standard | |
+|---|---|---|
+| `simuliere-nc` | leer | NC-Major erzwingen, zum Testen des Wächters |
+| `php-version` | `8.4` | PHP des Testlaufs |
+| `base-branch` | Default-Branch | Ziel im PR-Link |
+
+Der Aufrufer **muss** `contents: write` und `issues: write` vergeben. Ein
+aufgerufener Workflow bekommt nie mehr Rechte als sein Aufrufer.
 
 ## `nc-whatsnew-check`
 
