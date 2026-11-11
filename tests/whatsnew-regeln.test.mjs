@@ -194,3 +194,14 @@ test('CLI: kaputtes JSON -> Exit 1', () => {
 	assert.equal(code, 1)
 	assert.match(ausgabe, /kein gueltiges JSON/)
 })
+
+test('CLI: du/Sie in deutschen Texten gibt einen Hinweis, kein Fehler', () => {
+	const sie = guelt(); sie.text = { de: 'Jetzt können Sie Abwesenheiten stornieren.', en: 'x' }
+	const du = guelt(); du.where = { de: 'In deinen Einstellungen', en: 'x' }
+	const neutral = guelt(); neutral.text = { de: 'Sie bleibt sichtbar. Abwesenheiten lassen sich stornieren.', en: 'x' }
+	const { code, ausgabe } = lauf(app(JSON.stringify({ '1.0.0': [sie, du, neutral] })))
+	assert.equal(code, 0, ausgabe)
+	assert.match(ausgabe, /2 deutsche\(r\) Text\(e\) mit du\/Sie/)
+	assert.match(ausgabe, /1\.0\.0 Eintrag 1: text\.de/)
+	assert.match(ausgabe, /1\.0\.0 Eintrag 2: where\.de/)
+})

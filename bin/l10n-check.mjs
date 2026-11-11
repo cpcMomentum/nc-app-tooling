@@ -21,6 +21,7 @@
  *   npx nc-l10n-check              → pruefen (Exit 1 bei struktureller Drift)
  *   npx nc-l10n-check --fix        → Kataloge aus dem Code regenerieren
  *   npx nc-l10n-check --add-de_DE  → wie --fix, legt zusaetzlich l10n/de_DE an
+ *   npx nc-l10n-check --all        → Listen nicht kuerzen (nur Ausgabe)
  *
  * Laeuft im Wurzelverzeichnis der App (cwd). Alles Weitere wird erkannt:
  * die App-ID aus appinfo/info.xml, die Sprachen aus den vorhandenen
@@ -34,10 +35,13 @@ import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from '
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 
+import { DU_WORDS, SIE_WORDS, sieFormen } from './anrede.mjs'
+
 const ROOT = process.cwd()
 const L10N_DIR = join(ROOT, 'l10n')
 const ADD_FORMAL = process.argv.includes('--add-de_DE')
 const FIX = ADD_FORMAL || process.argv.includes('--fix')
+const ALL = process.argv.includes('--all')
 
 // Quellsprache. Alle Apps der Flotte schreiben deutsche Quellstrings; in dieser
 // Sprache gilt Wert == Key. Ein englischer Quellstring in einer deutschen App
@@ -48,22 +52,19 @@ const SOURCE_LANG = 'de'
 const COPY_VARIANTS = { en_GB: 'en' }
 // NC: de = "Du", de_DE = "Sie". Gepflegt, weicht nur bei Anrede von der Quelle ab.
 const FORMAL_LANG = 'de_DE'
-// Nur Pronomen; Imperative ("Waehle" / "Waehlen Sie") sind per Regex nicht sicher.
-const DU_WORDS = /\b(du|dich|dir|dein|deine|deinem|deinen|deiner|deines)\b/i
-const SIE_WORDS = /\b(Sie|Ihnen|Ihr|Ihre|Ihrem|Ihren|Ihrer|Ihres)\b/g
-// Am Satzanfang kann "Sie"/"Ihr" auch 3. Person sein: dort nur Hinweis.
-const SENTENCE_START = /(^|[.!?:;„"“(\n]\s*)$/
 // Imperative ohne Pronomen ("Lege … an"): nur Hinweis, feste Liste statt Endung -e.
-const IMPERATIVES = ['achte', 'aktiviere', 'ändere', 'beachte', 'behalte', 'bestätige', 'bewahre', 'entferne',
-	'ergänze', 'erstelle', 'exportiere', 'frage', 'füge', 'gehe', 'gib', 'hilf', 'hinterlege', 'importiere',
-	'klicke', 'kontrolliere', 'kopiere', 'lade', 'lege', 'lies', 'markiere', 'melde', 'nimm', 'nutze', 'öffne',
-	'passe', 'prüfe', 'richte', 'schau', 'schreibe', 'sende', 'setze', 'sieh', 'speichere', 'starte', 'stelle',
-	'tippe', 'trage', 'übernimm', 'verwende', 'versuche', 'warte', 'wechsle', 'wende', 'wiederhole', 'wirf',
-	'wähle', 'ziehe']
-// Am Satzanfang auch Nomen ("Frage löschen?"): dort nicht werten.
-const IMPERATIVE_NOUNS = new Set(['frage', 'lade', 'stelle', 'versuche'])
+const IMPERATIVES = ['abonniere', 'achte', 'aktiviere', 'aktualisiere', 'ändere', 'beachte', 'beantrage',
+	'bearbeite', 'behalte', 'benenne', 'bestätige', 'bewahre', 'brich', 'buche', 'entferne', 'erfasse', 'ergänze',
+	'erstelle', 'exportiere', 'frage', 'fülle', 'füge', 'gehe', 'genehmige', 'gib', 'hebe', 'hilf', 'hinterlege',
+	'importiere', 'klicke', 'kontaktiere', 'kontrolliere', 'kopiere', 'lade', 'lege', 'lies', 'lösche', 'markiere',
+	'melde', 'nimm', 'nutze', 'öffne', 'passe', 'prüfe', 'richte', 'schau', 'schließe', 'schreibe', 'sende',
+	'setze', 'sieh', 'speichere', 'starte', 'stelle', 'suche', 'tippe', 'trage', 'übernimm', 'verwende', 'verwirf',
+	'versuche', 'warte', 'wechsle', 'wende', 'wiederhole', 'wirf', 'wähle', 'ziehe']
+// Am Satzanfang auch Nomen ("Frage löschen?"): dort nur mit folgendem Pronomen/Artikel werten.
+const IMPERATIVE_NOUNS = new Set(['frage', 'lade', 'stelle', 'suche', 'versuche'])
 const cap = (w) => w[0].toUpperCase() + w.slice(1)
-const IMP_START = new RegExp(`(?:^|[.!?:;„“"(]\\s*)(${IMPERATIVES.filter((w) => !IMPERATIVE_NOUNS.has(w)).map(cap).join('|')})(?!\\p{L})`, 'u')
+const IMP_START = new RegExp(`(?:^|[.!?:;„“"(]\\s*)(?:(${IMPERATIVES.filter((w) => !IMPERATIVE_NOUNS.has(w)).map(cap).join('|')})(?!\\p{L})`
+	+ `|(?:${[...IMPERATIVE_NOUNS].map(cap).join('|')})\\s+(?:ihn|sie|es|ihm|ihr|das|den|die|dem|alle)(?!\\p{L}))`, 'u')
 // Mitten im Satz nur klein geschrieben: grosses "Versuche" ist dort ein Nomen.
 const IMP_MID = new RegExp(`(?:\\bBitte\\s+|\\b(?:dann|und|oder)\\s+|[,–—]\\s*)(${IMPERATIVES.join('|')})(?!\\p{L})`, 'u')
 
@@ -341,8 +342,9 @@ const diff = (a, b) => [...a].filter((x) => !b.has(x))
 const maintainedLangs = (langs) => langs.filter((l) => l !== SOURCE_LANG && !(l in COPY_VARIANTS))
 
 const flat = (v) => (Array.isArray(v) ? v.join(' ') : v)
-const sample = (keys) => keys.slice(0, 5).map((k) => `      ${JSON.stringify(k)}`).join('\n')
-	+ (keys.length > 5 ? `\n      … und ${keys.length - 5} weitere` : '')
+const SAMPLE = ALL ? Infinity : 5
+const sample = (keys) => keys.slice(0, SAMPLE).map((k) => `      ${JSON.stringify(k)}`).join('\n')
+	+ (keys.length > SAMPLE ? `\n      … und ${keys.length - SAMPLE} weitere (alle: --all)` : '')
 
 /** du-Formen in de_DE und Sie-Formen in der Quelle. */
 function checkAddress(canonical, formal) {
@@ -359,10 +361,9 @@ function checkAddress(canonical, formal) {
 	const sieStart = []
 	for (const k of canonical) {
 		if (FORMAL_KEYS.has(k)) continue
-		const hits = [].concat(sourceValue(k)).flatMap((text) =>
-			[...text.matchAll(SIE_WORDS)].map((m) => SENTENCE_START.test(text.slice(0, m.index))))
-		if (hits.includes(false)) sieMid.push(k)
-		else if (hits.length) sieStart.push(k)
+		const formen = [].concat(sourceValue(k)).map(sieFormen)
+		if (formen.some((f) => f.mitte)) sieMid.push(k)
+		else if (formen.some((f) => f.anfang)) sieStart.push(k)
 	}
 	if (sieMid.length) {
 		problems.push(`${SOURCE_LANG}: ${sieMid.length} Quelltext(e) siezen — die Quelle duzt, "Sie" gehoert nach ${FORMAL_LANG}:\n`
@@ -461,6 +462,16 @@ function main() {
 				+ `--fix legt ihn als Kopie von ${base} an.`)
 		} else if (!sameValue(catalogs[variant].json, catalogs[base].json)) {
 			problems.push(`${variant}: weicht von ${base} ab — muss eine exakte Kopie sein, --fix gleicht an`)
+		}
+	}
+	// Beim Umhaengen der Schluessel sieht ein unuebersetzter Wert (== alter Sie-Text) uebersetzt aus.
+	for (const lang of maintainedLangs(LANGS).filter((l) => !l.startsWith('de'))) {
+		const map = catalogs[lang].json.translations
+		const deutsch = Object.keys(map).filter((k) => !sameValue(map[k], sourceValue(k))
+			&& new RegExp(SIE_WORDS.source).test(flat(map[k])))
+		if (deutsch.length) {
+			info.push(`${lang}: ${deutsch.length} Eintrag/Eintraege enthalten deutsche Sie-Formen — `
+				+ `wohl noch unuebersetzt:\n${sample(deutsch)}`)
 		}
 	}
 	if (!LANGS.includes(FORMAL_LANG)) {

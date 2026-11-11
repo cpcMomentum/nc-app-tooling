@@ -18,6 +18,8 @@
  * boolean". Ob es Pflicht oder verboten ist, bleibt eine app-eigene Pruefung.
  */
 
+import { hatAnrede } from './anrede.mjs'
+
 const VERSION_RE = /^\d+\.\d+\.\d+$/
 
 /** Vergleicht Punkt-Versionen (x.y.z) numerisch je Stelle. */
@@ -134,4 +136,21 @@ export function versionsBefund(katalog, releaseVersion) {
 		text: `kein Eintrag fuer die Release-Version ${releaseVersion} — das Fenster bleibt aus. `
 			+ 'Bei einem Wartungsrelease ohne Berichtenswertes ist das in Ordnung, es muss nur bewusst sein',
 	}
+}
+
+/** Deutsche Texte mit du/Sie: whatsnew kennt kein de_DE, also bleibt de ohne Anrede. */
+export function anredeBefunde(katalog) {
+	const befunde = []
+	for (const [version, eintraege] of Object.entries(katalog)) {
+		if (!Array.isArray(eintraege)) continue
+		eintraege.forEach((eintrag, i) => {
+			for (const feld of ['title', 'text', 'where']) {
+				const text = eintrag?.[feld]?.de
+				if (typeof text === 'string' && hatAnrede(text)) {
+					befunde.push(`${version} Eintrag ${i + 1}: ${feld}.de "${text}"`)
+				}
+			}
+		})
+	}
+	return befunde
 }
