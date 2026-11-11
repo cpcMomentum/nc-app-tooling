@@ -1,0 +1,136 @@
+name: nc-compat
+
+# Geteilter Waechter der App-Flotte, Beschreibung und Aufruf im README.
+# Der Aufrufer muss contents: write und issues: write vergeben.
+
+on:
+  workflow_call:
+    inputs:
+      simuliere-nc:
+        description: 'Test: NC-Major erzwingen (z.B. 36). Leer = echt via Packagist.'
+        type: string
+        default: ''
+      php-version:
+        description: 'PHP-Version fuer den Testlauf. Neue NC-Majors heben die Untergrenze.'
+        type: string
+        default: '8.4'
+      base-branch:
+        description: 'Branch, auf dem der Bump fusst und gegen den der PR-Link zeigt. Leer = Branch des Laufs.'
+        type: string
+        default: ''
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base-branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Abhaengigkeiten (fuer nc-compat-check)
+        run: npm ci
+
+      # Input ueber env statt Interpolation: keine Injection ins Skript.
+      - name: Neues NC-Major erkennen
+        id: detect
+        env:
+          NC_COMPAT_LATEST_MAJOR: ${{ inputs.simuliere-nc }}
+        run: npx nc-compat-check
+
+      - name: PHP einrichten
+        if: steps.detect.outputs.neu != ''
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          coverage: none
+          tools: composer:v2
+
+      # Der Ausgang steuert unten Gruen/Rot, der Job selbst bleibt gruen.
+      - name: Gegen die neue NC-Version testen
+        if: steps.detect.outputs.neu != ''
+        id: test
+        continue-on-error: true
+        env:
+          OCP: ${{ steps.detect.outputs.constraint }}
+        run: |
+          # Ohne Pin, sonst gilt eine angehobene PHP-Untergrenze des neuen Majors als API-Aenderung.
+          composer config --unset platform.php
+          composer require --dev --no-update "nextcloud/ocp:$OCP" \
+            && composer update --no-interaction --no-progress --prefer-dist \
+            && composer test
+
+      # Issue und Branch einzeln idempotent: ein alter Lauf kann nur den Branch hinterlassen haben.
+      - name: Gruen -> Branch mit max-version-Bump und Issue mit PR-Link
+        if: steps.detect.outputs.neu != '' && steps.test.outcome == 'success'
+        env:
+          NEU: ${{ steps.detect.outputs.neu }}
+          BASE_INPUT: ${{ inputs.base-branch }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$NEU" in ''|*[!0-9]*) echo "FEHLER: unerwartete Version '$NEU'"; exit 1;; esac
+          base="${BASE_INPUT:-$GITHUB_REF_NAME}"
+          branch="chore/nc-compat-$NEU"
+          titel="nc-compat: max-version auf NC ${NEU} heben (geprüft)"
+
+          sed -i -E "s/(max-version=\")[0-9]+(\")/\1${NEU}\2/" appinfo/info.xml
+          if git diff --quiet -- appinfo/info.xml; then
+            echo "FEHLER: max-version in appinfo/info.xml nicht gefunden oder schon $NEU"; exit 1
+          fi
+
+          treffer="$(gh issue list --state all --search "in:title $titel" --json number,title,state \
+                --jq ".[] | select(.title == \"$titel\") | \"\(.number) \(.state)\"" | head -n 1)"
+          nr="${treffer%% *}"
+          # Ein geschlossenes Issue heisst: bewusst abgelehnt, nicht jede Woche neu anlegen.
+          if [ -n "$nr" ] && [ "${treffer##* }" != "OPEN" ]; then
+            echo "Issue #$nr \"$titel\" wurde geschlossen, kein neues."
+            exit 0
+          fi
+          if [ -n "$nr" ]; then
+            echo "Issue #$nr \"$titel\" existiert bereits, kein neues."
+          else
+            body="$(printf '`nc-compat` hat die Unit-Tests gegen `nextcloud/ocp:^%s.0` bestanden. Der Branch `%s` hebt `max-version` in `appinfo/info.xml` auf %s und enthält nur diese eine Änderung.\n\n**Nächster Schritt:** den PR mit einem Klick öffnen:\n%s/compare/%s...%s?expand=1\n\nDen PR öffnest du selbst, deshalb laufen `phpunit` und die übrigen Checks ganz normal an. Einen fertigen PR legt der Wächter nicht an, weil die Organisation GitHub Actions das Erstellen von PRs nicht erlaubt (nc-app-tooling#33).\n\nGeprüft ist nur die Stub-Ebene (API-Signaturen). Ein Durchklicken auf echtem NC %s ersetzt das nicht.\n\nLauf: %s' \
+              "$NEU" "$branch" "$NEU" "$REPO_URL" "$base" "$branch" "$NEU" "$RUN_URL")"
+            url="$(gh issue create --title "$titel" --body "$body")"
+            nr="${url##*/}"
+            echo "Issue #$nr angelegt: $url"
+          fi
+
+          # Bestehenden Branch nie anfassen, dort kann schon jemand arbeiten.
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch existiert bereits, nichts zu tun."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          msg="$(printf 'chore: max-version auf NC %s heben\n\nKompatibilitaet mit NC %s von nc-compat gegen dessen nextcloud/ocp-Stubs\ngeprueft (der Lauf war gruen).\n\nFixes #%s' "$NEU" "$NEU" "$nr")"
+          # Nur info.xml: der Testlauf hat composer.json und composer.lock veraendert.
+          git add appinfo/info.xml
+          git commit -m "$msg"
+          git push origin "$branch"
+
+      - name: Rot -> Issue
+        if: steps.detect.outputs.neu != '' && steps.test.outcome == 'failure'
+        env:
+          NEU: ${{ steps.detect.outputs.neu }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          titel="nc-compat: Kompatibilitaet mit NC ${NEU} pruefen"
+          offen="$(gh issue list --state open --search "in:title $titel" --json title --jq '.[].title')"
+          if printf '%s\n' "$offen" | grep -Fxq "$titel"; then
+            echo "Issue \"$titel\" existiert bereits, kein neues."
+            exit 0
+          fi
+          body="$(printf '`nc-compat` ist mit `nextcloud/ocp:^%s.0` **nicht durchgelaufen**. Vor einem max-version-Bump ist zu klären, woran.\n\n**Zuerst das Log lesen, es gibt zwei sehr verschiedene Ursachen:**\n1. `composer update` scheiterte (die Tests liefen gar nicht). Meist eine angehobene PHP-Untergrenze des neuen Majors, kein App-Problem.\n2. `composer test` scheiterte. Dann liegt tatsächlich eine geänderte oder entfernte OCP-Signatur vor.\n\nLauf mit Log: %s\n\nGeprüft ist nur die Stub-Ebene (API-Signaturen). Verhaltensänderungen zeigen sich erst auf echtem NC %s.' "$NEU" "$RUN_URL" "$NEU")"
+          gh issue create --title "$titel" --body "$body"

@@ -10,7 +10,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { constants, accessSync, readFileSync } from 'node:fs'
+import { constants, accessSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -31,5 +31,14 @@ test('package.json und bin/ stimmen ueberein', () => {
 	assert.ok(paket.files.includes('bin'), 'bin muss ausgeliefert werden')
 	for (const pfad of Object.values(paket.bin)) {
 		assert.ok(pfad.startsWith('bin/'), `${pfad} liegt nicht in bin/`)
+	}
+})
+
+test('kein geteilter Workflow legt Pull Requests an', () => {
+	// Die Organisation verbietet es dem GITHUB_TOKEN, der Lauf wuerde rot.
+	const ordner = join(WURZEL, '.github', 'workflows')
+	for (const datei of readdirSync(ordner)) {
+		assert.doesNotMatch(readFileSync(join(ordner, datei), 'utf8'), /gh\s+pr\s+(create|review|merge)/,
+			`${datei} ruft gh pr auf`)
 	}
 })
