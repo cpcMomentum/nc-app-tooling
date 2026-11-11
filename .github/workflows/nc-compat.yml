@@ -15,7 +15,7 @@ on:
         type: string
         default: '8.4'
       base-branch:
-        description: 'Zielbranch fuer den Bump. Leer = Default-Branch des Repos.'
+        description: 'Branch, auf dem der Bump fusst und gegen den der PR-Link zeigt. Leer = Branch des Laufs.'
         type: string
         default: ''
 
@@ -27,6 +27,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base-branch }}
 
       - uses: actions/setup-node@v4
         with:
@@ -71,19 +73,28 @@ jobs:
         env:
           NEU: ${{ steps.detect.outputs.neu }}
           BASE_INPUT: ${{ inputs.base-branch }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
         run: |
           case "$NEU" in ''|*[!0-9]*) echo "FEHLER: unerwartete Version '$NEU'"; exit 1;; esac
-          base="${BASE_INPUT:-$DEFAULT_BRANCH}"
-          [ -n "$base" ] || base="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
+          base="${BASE_INPUT:-$GITHUB_REF_NAME}"
           branch="chore/nc-compat-$NEU"
           titel="nc-compat: max-version auf NC ${NEU} heben (geprüft)"
 
-          nr="$(gh issue list --state open --search "in:title $titel" --json number,title \
-                --jq ".[] | select(.title == \"$titel\") | .number" | head -n 1)"
+          sed -i -E "s/(max-version=\")[0-9]+(\")/\1${NEU}\2/" appinfo/info.xml
+          if git diff --quiet -- appinfo/info.xml; then
+            echo "FEHLER: max-version in appinfo/info.xml nicht gefunden oder schon $NEU"; exit 1
+          fi
+
+          treffer="$(gh issue list --state all --search "in:title $titel" --json number,title,state \
+                --jq ".[] | select(.title == \"$titel\") | \"\(.number) \(.state)\"" | head -n 1)"
+          nr="${treffer%% *}"
+          # Ein geschlossenes Issue heisst: bewusst abgelehnt, nicht jede Woche neu anlegen.
+          if [ -n "$nr" ] && [ "${treffer##* }" != "OPEN" ]; then
+            echo "Issue #$nr \"$titel\" wurde geschlossen, kein neues."
+            exit 0
+          fi
           if [ -n "$nr" ]; then
             echo "Issue #$nr \"$titel\" existiert bereits, kein neues."
           else
@@ -99,7 +110,6 @@ jobs:
             echo "Branch $branch existiert bereits, nichts zu tun."
             exit 0
           fi
-          sed -i -E "s/(max-version=\")[0-9]+(\")/\1${NEU}\2/" appinfo/info.xml
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
@@ -117,8 +127,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           titel="nc-compat: Kompatibilitaet mit NC ${NEU} pruefen"
-          if gh issue list --state open --search "in:title $titel" --json title \
-             --jq '.[].title' | grep -Fxq "$titel"; then
+          offen="$(gh issue list --state open --search "in:title $titel" --json title --jq '.[].title')"
+          if printf '%s\n' "$offen" | grep -Fxq "$titel"; then
             echo "Issue \"$titel\" existiert bereits, kein neues."
             exit 0
           fi

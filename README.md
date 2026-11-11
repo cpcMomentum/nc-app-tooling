@@ -491,13 +491,14 @@ wenn `neu` gesetzt ist:
 
 Beides ist idempotent: Ein bestehender Branch wird nicht angefasst, ein offenes
 Issue mit demselben Titel nicht doppelt angelegt. Der Commit auf dem Branch
-trägt `Fixes #<Issue>`.
+trägt `Fixes #<Issue>`. Wer das Grün-Issue **schließt**, ohne zu mergen, lehnt
+den Bump damit ab: Der Wächter legt dafür kein neues an.
 
 **Warum grün keinen fertigen PR anlegt.** Die Organisation `cpcMomentum` erlaubt
 GitHub Actions nicht, PRs zu erstellen (Org-Einstellung „Allow GitHub Actions to
 create and approve pull requests" ist aus, auf Repo-Ebene nicht überschreibbar).
-Bis v1.20.0 rief der Grün-Zweig `gh pr create` auf und scheiterte daran in jeder
-App: Der Lauf wurde rot, obwohl der Test grün war (nc-app-tooling#33). Einen
+Bis v1.20.0 lag der Ablauf als Kopie in jeder App, rief im Grün-Zweig
+`gh pr create` auf und scheiterte daran überall: Der Lauf wurde rot, obwohl der Test grün war (nc-app-tooling#33). Einen
 Branch pushen und ein Issue anlegen darf das `GITHUB_TOKEN`. Den PR öffnet ein
 Mensch über den Link im Issue. Das hat einen Vorteil: Für PRs des
 `GITHUB_TOKEN` startet GitHub keine Folge-Workflows, für einen von Hand
@@ -507,7 +508,7 @@ geöffneten PR läuft `phpunit` normal an.
 |---|---|---|
 | `simuliere-nc` | leer | NC-Major erzwingen, zum Testen des Wächters |
 | `php-version` | `8.4` | PHP des Testlaufs |
-| `base-branch` | Default-Branch | Ziel im PR-Link |
+| `base-branch` | Branch des Laufs | Branch, auf dem der Bump fußt und gegen den der PR-Link zeigt |
 
 Der Aufrufer **muss** `contents: write` und `issues: write` vergeben. Ein
 aufgerufener Workflow bekommt nie mehr Rechte als sein Aufrufer.
