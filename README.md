@@ -703,12 +703,14 @@ begründen. Ist der Lauf grün, schaltet **ein Eintrag** beides ein:
 ```
 
 - **Pre-Commit:** `nc-pre-commit` ruft den Check auf, sobald dieses Skript
-  existiert und der Commit `lib/*.php` oder Dateien unter `src/` anfasst. Ohne
+  existiert und der Commit PHP-Dateien unter `lib/` oder Code-Dateien unter
+  `src/` anfasst. Ohne
   das Skript bleibt der Schritt aus, ein Tooling-Sprung blockiert also keine
   App, die ihren Bestand noch nicht durchgesehen hat.
 - **CI:** `npm run timezone:check` als Schritt in den Workflow der App, der
-  schon `npm run l10n:check` fährt. Das
-Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
+  schon `npm run l10n:check` fährt.
+
+Das Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
 Flotte war ein unscheinbares `$now = new DateTime();`.
 
 | Exit | Bedeutung |

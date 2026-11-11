@@ -12,34 +12,69 @@ import { BIN, git, schreibe } from './helfer.mjs'
 const angelegt = []
 process.on('exit', () => angelegt.forEach((p) => rmSync(p, { recursive: true, force: true })))
 
-function app({ skript, php }) {
+const MIT_SKRIPT = JSON.stringify({ name: 'testapp', scripts: { 'timezone:check': 'nc-timezone-check' } })
+const OHNE_SKRIPT = JSON.stringify({ name: 'testapp', scripts: {} })
+const php = (zeile) => `<?php\nclass A {\n\tfunction f() {\n\t\t${zeile}\n\t}\n}\n`
+const KALENDERTAG = php('$jahr = (int)date(\'Y\');')
+
+function app({ paket = MIT_SKRIPT, werkzeug = true, dateien = { 'lib/Service/A.php': KALENDERTAG }, stage = Object.keys(dateien) }) {
 	const wurzel = mkdtempSync(join(tmpdir(), 'nc-tooling-pc-tz-'))
 	angelegt.push(wurzel)
 	git(wurzel, 'init', '-q')
 	schreibe(wurzel, 'appinfo/info.xml', '<?xml version="1.0"?>\n<info><id>testapp</id></info>\n')
-	schreibe(wurzel, 'package.json', JSON.stringify({ name: 'testapp', scripts: skript ? { 'timezone:check': 'nc-timezone-check' } : {} }) + '\n')
-	mkdirSync(join(wurzel, 'node_modules', '.bin'), { recursive: true })
-	symlinkSync(join(BIN, 'timezone-check.mjs'), join(wurzel, 'node_modules', '.bin', 'nc-timezone-check'))
-	schreibe(wurzel, 'lib/Service/A.php', `<?php\nclass A {\n\tfunction f() {\n\t\t${php}\n\t}\n}\n`)
-	git(wurzel, 'add', 'lib/Service/A.php')
+	if (paket !== null) schreibe(wurzel, 'package.json', paket + '\n')
+	if (werkzeug) {
+		mkdirSync(join(wurzel, 'node_modules', '.bin'), { recursive: true })
+		symlinkSync(join(BIN, 'timezone-check.mjs'), join(wurzel, 'node_modules', '.bin', 'nc-timezone-check'))
+	}
+	for (const [pfad, inhalt] of Object.entries(dateien)) schreibe(wurzel, pfad, inhalt)
+	for (const pfad of stage) git(wurzel, 'add', pfad)
 	return wurzel
 }
 
 const lauf = (wurzel) => spawnSync('node', [join(BIN, 'pre-commit.mjs')], { cwd: wurzel, encoding: 'utf8' })
 
 test('mit Skript timezone:check blockiert ein Kalendertag aus UTC', () => {
-	const ergebnis = lauf(app({ skript: true, php: '$jahr = (int)date(\'Y\');' }))
+	const ergebnis = lauf(app({}))
 	assert.equal(ergebnis.status, 1, ergebnis.stdout)
 	assert.match(ergebnis.stdout, /\[Timezone Check\] BLOCKED/)
 })
 
 test('ohne das Skript bleibt der Schritt aus', () => {
-	const ergebnis = lauf(app({ skript: false, php: '$jahr = (int)date(\'Y\');' }))
-	assert.equal(ergebnis.status, 0, ergebnis.stdout)
-	assert.doesNotMatch(ergebnis.stdout, /Timezone Check/)
+	const ergebnis = lauf(app({ paket: OHNE_SKRIPT }))
+	assert.equal(ergebnis.status, 0, ergebnis.stdout + ergebnis.stderr)
+	assert.doesNotMatch(ergebnis.stdout, /[Tt]imezone/)
 })
 
-test('mit Skript und sauberem Code laeuft der Hook durch', () => {
-	const ergebnis = lauf(app({ skript: true, php: '$e->setCreatedAt(new DateTime());' }))
+for (const [name, paket] of [['fehlendes', null], ['kaputtes', '{ kaputt'], ['leeres', 'null']]) {
+	test(`${name} package.json laesst den Hook nicht abstuerzen`, () => {
+		const ergebnis = lauf(app({ paket }))
+		assert.equal(ergebnis.status, 0, ergebnis.stdout + ergebnis.stderr)
+		assert.equal(ergebnis.stderr, '')
+		assert.doesNotMatch(ergebnis.stdout, /[Tt]imezone/)
+	})
+}
+
+test('mit Skript und sauberem Code laeuft der Check wirklich und der Hook geht durch', () => {
+	const ergebnis = lauf(app({ dateien: { 'lib/Service/A.php': php('$e->setCreatedAt(new DateTime());') } }))
 	assert.equal(ergebnis.status, 0, ergebnis.stdout)
+	assert.match(ergebnis.stdout, /nc-timezone-check: keine Befunde/)
+})
+
+test('eine Datei unter src/ loest den Schritt aus', () => {
+	const ergebnis = lauf(app({ dateien: { 'src/a.mts': 'export const tag = new Date().toISOString().slice(0, 10)\n' } }))
+	assert.equal(ergebnis.status, 1, ergebnis.stdout)
+	assert.match(ergebnis.stdout, /\[Timezone Check\] BLOCKED/)
+})
+
+test('ist nur eine andere Datei vorgemerkt, bleibt der Schritt aus', () => {
+	const ergebnis = lauf(app({ dateien: { 'lib/Service/A.php': KALENDERTAG, 'README.md': 'x\n' }, stage: ['README.md'] }))
+	assert.equal(ergebnis.status, 0, ergebnis.stdout)
+	assert.doesNotMatch(ergebnis.stdout, /[Tt]imezone/)
+})
+
+test('fehlt das Werkzeug, wird der Schritt mit Hinweis uebersprungen', () => {
+	const ergebnis = lauf(app({ werkzeug: false }))
+	assert.equal(ergebnis.status, 0, ergebnis.stdout)
+	assert.match(ergebnis.stdout, /\[Timezone Check\] uebersprungen/)
 })
