@@ -21,11 +21,12 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 
-import { pruefeSchema } from './whatsnew-regeln.mjs'
+import { anredeBefunde, pruefeSchema } from './whatsnew-regeln.mjs'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const dim = (s) => `\x1b[2m${s}\x1b[0m`
+const yellow = (s) => `\x1b[33m${s}\x1b[0m`
 
 const DATEI = 'whatsnew/whatsnew.json'
 
@@ -47,6 +48,13 @@ if (fehler.length) {
 	console.error(red(`✗ nc-whatsnew-check: ${fehler.length} Schema-Fehler in ${DATEI}:`))
 	fehler.forEach((f) => console.error(red(`  • ${f}`)))
 	process.exit(1)
+}
+
+const anrede = anredeBefunde(katalog)
+if (anrede.length) {
+	console.log(yellow(`  ⚐ ${anrede.length} deutsche(r) Text(e) mit du/Sie — "Was ist neu?" bleibt ohne Anrede, `
+		+ 'weil de_DE-Nutzer denselben de-Text sehen:'))
+	anrede.forEach((a) => console.log(dim(`      ${a}`)))
 }
 
 const versionen = Object.keys(katalog).length

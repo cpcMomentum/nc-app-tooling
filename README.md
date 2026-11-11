@@ -96,6 +96,7 @@ Andere regionale Codes aus `core/l10n` haben bei uns keinen Grundkatalog.
 ```bash
 npm run l10n:fix                  # legt en_GB an / hält es gleich mit en
 npx nc-l10n-check --add-de_DE     # einmalig: de_DE als Kopie von de anlegen
+npx nc-l10n-check --all           # Listen vollständig statt der ersten fünf
 ```
 
 Eingeschaltet wird über die Datei, nicht über einen Schalter. Fehlt sie, gibt
@@ -122,9 +123,13 @@ Pronomen, Imperative wie „Wähle“ / „Wählen Sie“ bleiben dem Review):
   es nur als Hinweis, und nur solange der `de_DE`-Eintrag noch gleich der
   Quelle ist. Erkannt werden Verben aus einer festen Liste: am Satzanfang groß,
   mitten im Satz (nach „Bitte“, Komma, Gedankenstrich, „und/oder/dann“) klein.
-  Großes „Versuche“ mitten im Satz ist ein Nomen, „Frage“, „Stelle“, „Lade“
-  und „Versuche“ am Satzanfang ebenfalls. Im Pilot rechnungswerk waren 14 von
-  30 Anrede-Fällen reine Imperative.
+  Großes „Versuche“ mitten im Satz ist ein Nomen. „Frage“, „Stelle“, „Lade“,
+  „Suche“ und „Versuche“ am Satzanfang zählen nur, wenn ein Pronomen oder
+  Artikel folgt („Stelle ihn … her“, nicht „Stelle gespeichert“). Im Pilot
+  rechnungswerk waren 14 von 30 Anrede-Fällen reine Imperative.
+- Deutsche Sie-Formen in einer **anderen Sprache** (`en`, `cs`, …) gibt es als
+  Hinweis, wenn der Wert vom Quelltext abweicht. Das ist die Falle aus
+  Schritt 3 unten.
 
 Umstellung einer App, in dieser Reihenfolge:
 
@@ -132,7 +137,10 @@ Umstellung einer App, in dieser Reihenfolge:
 2. Quelltexte mit Anrede im Code auf „du“ umstellen.
 3. In **allen** Katalogen (`de_DE`, `en`, …) die alten Schlüssel auf die neuen
    umhängen, die Werte behalten. Erst danach `--fix`, sonst löscht er die alten
-   Schlüssel samt Übersetzung als tot.
+   Schlüssel samt Übersetzung als tot. **Falle:** War ein Eintrag noch
+   unübersetzt (Wert == alter Sie-Schlüssel), wird der Wert zum neuen
+   du-Schlüssel, nicht zum alten Text. Sonst steht der deutsche Sie-Text in
+   `cs` und sieht übersetzt aus.
 4. `npx nc-l10n-check` listet, was in `de_DE` noch duzt.
 
 ### Im Pre-Commit-Hook
@@ -485,6 +493,13 @@ in jeder App einzeln. Geprüft wird universell:
 - `where` ist optional, aber wenn da, dann zweisprachig
 - `plus` ist optional (je App Pflicht **oder** verboten — vinarium etwa verbietet
   es); wenn vorhanden, muss es `true`/`false` sein
+
+**Anrede: keine.** `whatsnew.json` kennt nur `de` und `en`, Nutzer mit
+`de_DE` sehen denselben `de`-Text. Deshalb sprechen die Texte niemanden an:
+„Abwesenheiten lassen sich jetzt stornieren“ statt „Sie können …“ oder
+„Du kannst …“. Steht im `de`-Text von `title`, `text` oder `where` ein du- oder
+Sie-Pronomen (Sie nur mitten im Satz), gibt `nc-whatsnew-check` einen Hinweis,
+der nicht blockiert.
 
 **Bewusst app-spezifisch und deshalb nicht hier:** die Icon-Whitelist (kennt nur
 `WhatsNewDialog.vue`) und ob `plus` Pflicht oder verboten ist. Solche Regeln

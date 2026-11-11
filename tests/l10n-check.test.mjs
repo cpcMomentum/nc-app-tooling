@@ -210,3 +210,39 @@ test('Imperativ nach und/oder/dann wird erkannt', () => {
 	const app = formalApp({ 'src/App.vue': `t('testapp', '${text}')\n` }, [text])
 	assert.match(lauf('l10n-check.mjs', app).ausgabe, /de_DE: 1 Eintrag\/Eintraege wirken wie Imperativ/)
 })
+
+test('Imperativ: Befunde aus worktime und contractmanager werden erkannt', () => {
+	const treffer = [
+		'Bitte schließe diesen Dialog, verwirf die Stempelung und erfasse die Zeit manuell.',
+		'Hebe die Einschränkung auf.',
+		'Abonniere deine Termine.',
+		'Stelle ihn dort wieder her.',
+		'Suche die Datei im Ordner.',
+	]
+	const keine = ['Suche', 'Stelle gespeichert.', 'Frage nach dem Passwort']
+	const alle = [...treffer, ...keine]
+	const app = formalApp({ 'src/App.vue': alle.map((s) => `t('testapp', '${s}')`).join('\n') + '\n' }, alle)
+	const r = lauf('l10n-check.mjs', app, ['--all'])
+	assert.match(r.ausgabe, new RegExp(`de_DE: ${treffer.length} Eintrag/Eintraege wirken wie Imperativ`))
+})
+
+test('--all listet alle Eintraege statt der ersten fuenf', () => {
+	const texte = Array.from({ length: 7 }, (_, i) => `Bitte prüfe Feld ${i}.`)
+	const app = formalApp({ 'src/App.vue': texte.map((s) => `t('testapp', '${s}')`).join('\n') + '\n' }, texte)
+	assert.match(lauf('l10n-check.mjs', app).ausgabe, /… und 2 weitere \(alle: --all\)/)
+	const r = lauf('l10n-check.mjs', app, ['--all'])
+	assert.doesNotMatch(r.ausgabe, /weitere/)
+	assert.match(r.ausgabe, /Bitte prüfe Feld 6\./)
+})
+
+test('Sie-Formen in einer Fremdsprache: Hinweis auf unuebersetzten Wert nach dem Umhaengen', () => {
+	const app = l10nApp({
+		quelle: ['Speichere deine Eingaben.', 'Sie arbeiten'],
+		en: { 'Speichere deine Eingaben.': 'Save your input.', 'Sie arbeiten': 'They work' },
+		extra: { cs: { 'Speichere deine Eingaben.': 'Speichern Sie Ihre Eingaben.', 'Sie arbeiten': 'Sie arbeiten' } },
+	})
+	const r = lauf('l10n-check.mjs', app)
+	assert.equal(r.code, 0, r.ausgabe)
+	assert.match(r.ausgabe, /cs: 1 Eintrag\/Eintraege enthalten deutsche Sie-Formen/)
+	assert.doesNotMatch(r.ausgabe, /en: \d+ Eintrag\/Eintraege enthalten deutsche/)
+})
