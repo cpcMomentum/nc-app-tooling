@@ -19,15 +19,20 @@ process.on('exit', () => angelegt.forEach((p) => rmSync(p, { recursive: true, fo
 // Kennt die Konten aus FAKE_VORHANDEN, schreibt jeden Aufruf samt OC_PASS ins Protokoll.
 const FAKE_OCC = `import { appendFileSync } from 'node:fs'
 const args = process.argv.slice(2)
-appendFileSync(process.env.FAKE_PROTOKOLL, JSON.stringify({ args, pass: process.env.OC_PASS ?? null }) + '\\n')
+appendFileSync(process.env.FAKE_PROTOKOLL, JSON.stringify({ args, pass: process.env.OC_PASS ?? null, ncPass: process.env.NC_PASS ?? null }) + '\\n')
 if (process.env.FAKE_AUS === '1') process.exit(1)
 const vorhanden = (process.env.FAKE_VORHANDEN ?? '').split(',').filter(Boolean)
-if (args[0] === 'user:info') process.exit(vorhanden.includes(args[1]) ? 0 : 1)
+if (args[0] === 'user:info' && process.env.FAKE_INFO_KAPUTT === '1') { process.stderr.write('Datenbank weg'); process.exit(2) }
+if (args[0] === 'user:info') {
+	if (vorhanden.includes(args[1])) process.exit(0)
+	process.stdout.write('user not found'); process.exit(1)
+}
+if (args[0] === 'group:add') { process.stdout.write('Group "' + args[1] + '" already exists.'); process.exit(1) }
 if (args[0] === process.env.FAKE_SCHEITERT) { process.stderr.write('kaputt'); process.exit(1) }
 process.exit(0)
 `
 
-function lauf(argumente = [], { vorhanden = [], aus = false, scheitert = '' } = {}) {
+function lauf(argumente = [], { vorhanden = [], aus = false, scheitert = '', infoKaputt = false } = {}) {
 	const ordner = mkdtempSync(join(tmpdir(), 'nc-tooling-konten-'))
 	angelegt.push(ordner)
 	const fake = join(ordner, 'occ.mjs')
@@ -42,6 +47,8 @@ function lauf(argumente = [], { vorhanden = [], aus = false, scheitert = '' } = 
 			FAKE_VORHANDEN: vorhanden.join(','),
 			FAKE_AUS: aus ? '1' : '0',
 			FAKE_SCHEITERT: scheitert,
+			FAKE_INFO_KAPUTT: infoKaputt ? '1' : '0',
+			NC_PASS: 'fremd-aus-der-shell',
 			OC_PASS: 'aus-der-umgebung-des-aufrufers',
 		},
 	})
@@ -84,6 +91,7 @@ test('das Passwort steht nie in der Argumentliste und nur bei Passwort-Aufrufen 
 		for (const p of passwoerter) assert.ok(!a.args.includes(p), `Passwort in Argumenten: ${a.args.join(' ')}`)
 		const brauchtPasswort = ['user:add', 'user:resetpassword'].includes(a.args[0])
 		assert.equal(a.pass !== null, brauchtPasswort, `OC_PASS bei ${a.args[0]}`)
+		assert.equal(a.ncPass, null, 'NC_PASS des Aufrufers darf nicht durchsickern')
 	}
 })
 
@@ -91,8 +99,8 @@ test('fasst nur Konten aus der Liste an und loescht nichts', () => {
 	const { aufrufe } = lauf([], { vorhanden: KONTEN.map((k) => k.uid) })
 	const uids = new Set(KONTEN.map((k) => k.uid))
 	for (const a of aufrufe) {
-		assert.ok(['status', 'user:info', 'user:resetpassword', 'group:adduser'].includes(a.args[0]), a.args[0])
-		if (a.args[0] !== 'status') assert.ok(uids.has(a.args.at(-1)), `fremdes Konto: ${a.args.join(' ')}`)
+		assert.ok(['status', 'user:info', 'user:enable', 'user:resetpassword', 'group:add', 'group:adduser'].includes(a.args[0]), a.args[0])
+		if (!['status', 'group:add'].includes(a.args[0])) assert.ok(uids.has(a.args.at(-1)), `fremdes Konto: ${a.args.join(' ')}`)
 	}
 })
 
@@ -115,6 +123,37 @@ test('ein gescheiterter Schritt -> Exit 1, die uebrigen Konten laufen trotzdem',
 	assert.equal(status, 1)
 	assert.match(stdout, /^FEHLER {2}admin: Passwort setzen gescheitert: kaputt/m)
 	assert.match(stdout, /^ok {6}testlea: angelegt/m)
+})
+
+test('vorhandenes Konto: pruefen, aktivieren, Passwort, Gruppe, in dieser Reihenfolge', () => {
+	const { aufrufe } = lauf([], { vorhanden: KONTEN.map((k) => k.uid) })
+	const admin = aufrufe.filter((a) => a.args.includes('admin')).map((a) => a.args[0])
+	assert.deepEqual(admin, ['user:info', 'user:enable', 'user:resetpassword', 'group:add', 'group:adduser'])
+})
+
+test('occ-Aussetzer bei user:info fuehrt nicht zum Anlegen', () => {
+	const { status, stdout, aufrufe } = lauf([], { infoKaputt: true })
+	assert.equal(status, 1)
+	assert.match(stdout, /^FEHLER {2}admin: Konto pruefen gescheitert: Datenbank weg/m)
+	assert.ok(!aufrufe.some((a) => a.args[0] === 'user:add'))
+})
+
+test('Anlegen oder Gruppenzuordnung scheitert -> Exit 1 mit Grund', () => {
+	const anlegen = lauf([], { scheitert: 'user:add' })
+	assert.equal(anlegen.status, 1)
+	assert.match(anlegen.stdout, /^FEHLER {2}testlea: Anlegen gescheitert: kaputt/m)
+	const gruppe = lauf([], { vorhanden: KONTEN.map((k) => k.uid), scheitert: 'group:adduser' })
+	assert.equal(gruppe.status, 1)
+	assert.match(gruppe.stdout, /^FEHLER {2}admin: Gruppe admin gescheitert: kaputt/m)
+	assert.match(gruppe.stdout, /^ok {6}testlea: aktiv, Passwort gesetzt/m)
+})
+
+test('occ-Programm fehlt -> Exit 1 mit Ursache', () => {
+	const ergebnis = spawnSync('node', [join(BIN, 'dev-testkonten.mjs')], {
+		encoding: 'utf8', env: { ...process.env, NC_OCC: '/gibt/es/nicht/occ' },
+	})
+	assert.equal(ergebnis.status, 1)
+	assert.match(ergebnis.stderr, /nicht erreichbar.*ENOENT/)
 })
 
 test('unbekanntes Argument -> Exit 2', () => {

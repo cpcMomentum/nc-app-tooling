@@ -587,9 +587,10 @@ kommt es per PR in diese Liste, nicht per Hand in die Instanz.
 
 Was das Werkzeug tut und lässt:
 
-- Fehlt ein Konto der Liste, legt es das an. Ist es da, setzt es das Passwort
-  auf den festen Wert. Ein zweiter Lauf ändert nichts mehr.
-- Es ordnet die Gruppen der Liste zu.
+- Fehlt ein Konto der Liste, legt es das an. Ist es da, aktiviert es das Konto
+  (falls jemand es gesperrt hat) und setzt das Passwort auf den festen Wert.
+  Ein zweiter Lauf ändert am Zustand nichts mehr.
+- Es ordnet die Gruppen der Liste zu und legt eine fehlende Gruppe an.
 - Konten, die nicht in der Liste stehen, fasst es **nie** an, und es löscht
   nichts.
 - App-eigene Daten (etwa ein WorkTime-Mitarbeiterprofil) bleiben Sache der App.
@@ -601,7 +602,8 @@ Der `occ`-Aufruf kommt aus `NC_OCC`, Standard ist
 `docker exec -u www-data -e OC_PASS -i nextcloud-dev php occ`. Das Passwort
 geht über `OC_PASS` in die Umgebung (`--password-from-env`), nicht in die
 Prozessliste. Wer `NC_OCC` selbst setzt und `docker exec` nutzt, braucht
-`-e OC_PASS` darin.
+`-e OC_PASS` darin. `NC_OCC` wird an Leerzeichen getrennt, Pfade mit
+Leerzeichen gehen darin nicht.
 
 Nur für die **lokale** Instanz. Die Konten der e2e-Läufe in GitHub Actions legt
 weiterhin das Provisionierungsskript der jeweiligen App an.
