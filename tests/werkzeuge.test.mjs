@@ -42,3 +42,13 @@ test('kein geteilter Workflow legt Pull Requests an', () => {
 			`${datei} ruft gh pr auf`)
 	}
 })
+
+test('kein geteilter Workflow loest Abhaengigkeiten am Lockfile vorbei auf', () => {
+	// Live gegen die Registry aufgeloest flakt der Lauf bei frisch veroeffentlichten Versionen.
+	const ordner = join(WURZEL, '.github', 'workflows')
+	for (const datei of readdirSync(ordner)) {
+		const text = readFileSync(join(ordner, datei), 'utf8')
+		assert.doesNotMatch(text, /rm\s+(-\w+\s+)*package-lock\.json/, `${datei} loescht das Lockfile`)
+		assert.doesNotMatch(text, /^\s*(run:|-\s*run:)?\s*npm\s+(install|i)\b/m, `${datei} ruft npm install statt npm ci auf`)
+	}
+})
