@@ -25,7 +25,7 @@ const JETZT_WORT = String.raw`(?:now|today|tomorrow|yesterday|midnight|noon|firs
 const JETZT_TEXT = String.raw`['"](?:${JETZT_WORT}[^'"]*)?['"]`
 const KLASSE = String.raw`new\s+\\?DateTime(?:Immutable)?`
 const UTC = String.raw`new\s+\\?DateTimeZone\s*\(\s*['"]UTC['"]\s*\)`
-const FREI = String.raw`(?<![\w>:$\\])`
+const FREI = String.raw`(?<![\w>:$])\\?`
 
 const PHP_REGELN = [
 	{ name: 'new DateTime() ohne Zeitzone', muster: new RegExp(String.raw`${KLASSE}\s*(?:\(\s*(?:null|(?:datetime:\s*)?${JETZT_TEXT})?\s*(?:,\s*null\s*)?\)|\(\s*$|(?![\s(\\\w]))`, 'i') },
@@ -33,16 +33,36 @@ const PHP_REGELN = [
 	{ name: 'date_create() ohne Zeitzone', muster: new RegExp(String.raw`${FREI}date_create(?:_immutable)?\s*\(\s*(?:${JETZT_TEXT})?\s*\)`, 'i') },
 	{ name: 'date() ohne Zeitpunkt', muster: new RegExp(String.raw`${FREI}(?:gm|i)?date\s*\(\s*(['"])[^'"]*\1\s*(?:,\s*(?:time\s*\(\s*\)|[^,()]*->getTime\s*\(\s*\))\s*)?\)`, 'i') },
 	{ name: 'strtotime(\'jetzt\')', muster: new RegExp(String.raw`${FREI}strtotime\s*\(\s*${JETZT_TEXT}\s*\)`, 'i') },
-	{ name: 'ITimeFactory ohne Zeitzone', muster: new RegExp(String.raw`->(?:getDateTime\s*\(\s*(?:['"][^'"]*['"])?\s*(?:,\s*${UTC}\s*)?\)|now\s*\(\s*\)\s*->\s*format\s*\()`, 'i') },
+	{ name: 'ITimeFactory ohne Zeitzone', muster: new RegExp(String.raw`(?:->getDateTime\s*\(\s*(?:${JETZT_TEXT})?\s*(?:,\s*${UTC}\s*)?\)(?!\s*->\s*setTimezone\s*\()|(?<!\$this)->now\s*\(\s*\))`, 'i') },
 ]
 
-const ZEITSTEMPEL = '(?:Created|Updated|Modified|Deleted|Sent|Seen|Read|Processed|Approved|Submitted|Locked|Cancelled|Archived|Closed|Revoked|Added|Assigned|Done|Frozen|Committed|Exported|Imported|Last_?Used|Status)'
+const NAMEN = ['Created', 'Updated', 'Modified', 'Deleted', 'Sent', 'Seen', 'Read', 'Processed', 'Approved', 'Submitted', 'Locked', 'Cancelled', 'Archived', 'Closed', 'Revoked', 'Added', 'Assigned', 'Done', 'Frozen', 'Committed', 'Exported', 'Imported', 'LastUsed', 'Status']
+const GROSS = `(?:${NAMEN.join('|')})`
+const KLEIN = `(?:${NAMEN.map((n) => n[0].toLowerCase() + n.slice(1)).join('|')})`
+const SNAKE = `(?:${NAMEN.map((n) => n.replace(/(?!^)([A-Z])/g, '_$1').toLowerCase()).join('|')})`
 
 // Erkennbar ein Zeitstempel: der Wert steht im Argument eines bekannten ...At-Setters oder ..._at-Feldes.
-const PHP_ZEITSTEMPEL = new RegExp(
-	String.raw`->set\w*${ZEITSTEMPEL}At\s*\(|->setDateTime\s*\(|->set\s*\(\s*['"]\w*${ZEITSTEMPEL}_at['"]\s*,|['"]\w*${ZEITSTEMPEL}_?At['"]\s*=>`,
-	'gi',
-)
+const PHP_ZEITSTEMPEL = [
+	{ tiefe: 1, muster: new RegExp(String.raw`->set(?:\w*[a-z0-9])?${GROSS}At\s*\(|->setDateTime\s*\(|->set\s*\(\s*['"](?:\w+_)?${SNAKE}_at['"]\s*,`, 'g') },
+	{ tiefe: 0, muster: new RegExp(String.raw`['"](?:${KLEIN}|\w*[a-z0-9]${GROSS})At['"]\s*=>|['"](?:\w+_)?${SNAKE}_at['"]\s*=>`, 'g') },
+]
+
+/** Liegt `bis` noch im Argument, das bei `von` beginnt? `tiefe` ist die Klammertiefe direkt hinter dem Ausnahme-Treffer. */
+function imArgument(code, von, bis, tiefe) {
+	const start = tiefe
+	for (const zeichen of code.slice(von, bis)) {
+		if ('([{'.includes(zeichen)) tiefe++
+		else if (')]}'.includes(zeichen)) tiefe--
+		else if (zeichen === ',' && tiefe === 0) return false
+		if (tiefe < start) return false
+	}
+	return true
+}
+
+function istZeitstempel(code, position) {
+	return PHP_ZEITSTEMPEL.some(({ tiefe, muster }) => [...code.matchAll(muster)]
+		.some((z) => z.index < position && imArgument(code, z.index + z[0].length, position, tiefe)))
+}
 
 const JS_REGELN = [
 	{ name: 'toISOString() als Kalendertag', muster: /to(?:ISOString|JSON)\(\)\s*\??\.\s*(?:substring|slice|substr)\(\s*0\s*,\s*(?:4|7|10)\s*\)|to(?:ISOString|JSON)\(\)\s*\??\.\s*split\(\s*(?:['"`]T['"`]|\/T\/)\s*\)(?!\s*\[\s*1\s*\])/ },
@@ -73,9 +93,11 @@ function trenne(zeile, inBlock, php) {
 			else if (zeile[i] === quote) quote = null
 			continue
 		}
-		if (rest.startsWith('/*')) { inBlock = '*/'; kommentar += '/*'; i++; continue }
+		// Hinter einem Backslash ist es ein Regex-Literal (/\/*$/), kein Kommentar.
+		const maskiert = zeile[i - 1] === '\\'
+		if (!maskiert && rest.startsWith('/*')) { inBlock = '*/'; kommentar += '/*'; i++; continue }
 		if (rest.startsWith('<!--')) { inBlock = '-->'; kommentar += '<!--'; i += 3; continue }
-		if (rest.startsWith('//') || (php && zeile[i] === '#' && zeile[i + 1] !== '[')) { kommentar += rest; break }
+		if ((!maskiert && rest.startsWith('//')) || (php && zeile[i] === '#' && zeile[i + 1] !== '[')) { kommentar += rest; break }
 		if (zeile[i] === '\'' || zeile[i] === '"' || zeile[i] === '`') quote = zeile[i]
 		code += zeile[i]
 	}
@@ -104,12 +126,12 @@ function pruefe(pfad, regeln, php) {
 		inBlock = teile.inBlock
 		const vorzeile = davor
 		davor = teile
+		if (MARKE.test(teile.kommentar) || (vorzeile.code.trim() === '' && MARKE.test(vorzeile.kommentar))) return
 		for (const regel of regeln) {
-			const treffer = regel.muster.exec(teile.code)
-			if (!treffer) continue
-			const zeitstempel = php && [...teile.code.matchAll(PHP_ZEITSTEMPEL)].some((z) => z.index < treffer.index)
-			const begruendet = MARKE.test(teile.kommentar) || (vorzeile.code.trim() === '' && MARKE.test(vorzeile.kommentar))
-			if (!zeitstempel && !begruendet) befunde.push({ pfad, zeile: i + 1, regel: regel.name, text: zeile.trim() })
+			const offen = [...teile.code.matchAll(new RegExp(regel.muster.source, regel.muster.flags.replace('g', '') + 'g'))]
+				.some((treffer) => !(php && istZeitstempel(teile.code, treffer.index)))
+			if (!offen) continue
+			befunde.push({ pfad, zeile: i + 1, regel: regel.name, text: zeile.trim() })
 			break
 		}
 	})

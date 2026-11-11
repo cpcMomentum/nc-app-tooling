@@ -66,6 +66,14 @@ const BEFUNDE = [
 	'/** doc */ $c = new DateTime();',
 	'#[Pure] function g() { return date(\'Y\'); }',
 	'$a = 1; $today = new DateTime(); $s = \'tz-ok: nur im String\';',
+	'$e->setUpdatedAt($now)->setDueDate(new DateTime());',
+	'$e->setCreatedAt($now); $e->setDueDate(new DateTime(\'+14 days\'));',
+	'return [\'createdAt\' => $now, \'dueDate\' => new DateTime(\'today\')];',
+	'return [\'exportedAt\' => date(\'c\'), \'year\' => date(\'Y\')];',
+	'$y = \\date(\'Y\');',
+	'$t = \\strtotime(\'today\');',
+	'$now = $this->time->now();',
+	'$e->setSpreadAt(new DateTime());',
 ]
 
 const KEINE_BEFUNDE = [
@@ -97,6 +105,13 @@ const KEINE_BEFUNDE = [
 	'$e->setDatevStatusAt(new DateTime());',
 	'\'deletedAt\' => (new DateTime())->format(\'c\'),',
 	'$since = (new DateTime())->modify(\'-30 days\'); // TZ-OK: rollendes Fenster',
+	'$lokal = $this->timeFactory->getDateTime()->setTimezone($this->zone->getTimeZone(false, $uid));',
+	'$d = $this->timeFactory->getDateTime(\'2024-01-01\');',
+	'$e->setCreatedAt($x ?? new DateTime());',
+	'$now = $this->now();',
+	'$e->setUpdatedAt((new DateTime())->setTimezone($utc));',
+	'return [\'createdAt\' => new DateTime(), \'name\' => $name];',
+	'$qb->set(\'updated_at\', $qb->createNamedParameter(new DateTime(), IQueryBuilder::PARAM_DATETIME_MUTABLE));',
 ]
 
 for (const zeile of BEFUNDE) {
@@ -157,12 +172,13 @@ test('Frontend: toISOString() als Kalendertag ist ein Befund, lokale Bestandteil
 		'src/f.spec.vue': '<script>\nconst d = new Date().toISOString().slice(0, 10)\n</script>\n',
 		'src/g.vue': '<template>\n<!-- d.toISOString().slice(0, 10) -->\n</template>\n<script>\nconst uhr = d.toISOString().split(\'T\')[1]\n</script>\n',
 		'src/h.tsx': 'const monat = d.toISOString()?.substring(0, 7)\n',
+		'src/i.ts': 'const p = pfad.replace(/\\/*$/, \'\')\nconst tag = new Date().toISOString().slice(0, 10)\nconst u = url.replace(/^https?:\\/\\//, \'\') + d.toISOString().slice(0, 10)\n',
 	}))
 	assert.equal(ergebnis.status, 1)
-	for (const datei of ['src/a.vue:2', 'src/b.ts:1', 'src/c.js:1', 'src/h.tsx:1']) assert.ok(ergebnis.stdout.includes(datei), datei)
+	for (const datei of ['src/a.vue:2', 'src/b.ts:1', 'src/c.js:1', 'src/h.tsx:1', 'src/i.ts:2', 'src/i.ts:3']) assert.ok(ergebnis.stdout.includes(datei), datei)
 	assert.ok(!ergebnis.stdout.includes('src/d.ts'))
 	for (const datei of ['src/e.spec.ts', 'src/f.spec.vue', 'src/g.vue']) assert.ok(!ergebnis.stdout.includes(datei), datei)
-	assert.match(ergebnis.stdout, /4 Stelle\(n\)/)
+	assert.match(ergebnis.stdout, /6 Stelle\(n\)/)
 })
 
 test('Migrationen werden nicht geprueft', () => {

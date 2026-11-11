@@ -616,7 +616,7 @@ Gemeldet wird in `lib/` (ohne `lib/Migration/`):
 | `date_create()` und `date_create_immutable()` ebenso | `date_create('today')` |
 | `date('…')`, `gmdate('…')`, `idate('…')` ohne Zeitpunkt oder mit `time()` | `(int)date('Y')`, `date('Y-m-d', time())` |
 | `strtotime('today' …)` | |
-| `getDateTime()` und `now()->format(` der `ITimeFactory` | `$this->time->getDateTime()->format('Y-m-d')` |
+| `getDateTime()` und `now()` der `ITimeFactory`, außer es folgt direkt `->setTimezone(` | `$this->time->getDateTime()->format('Y-m-d')` |
 
 Und in `src/` (`.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.vue`, ohne `*.spec.*`,
 `*.test.*` und `*.d.ts`):
@@ -634,8 +634,11 @@ Nicht gemeldet wird, was ein gegebenes Datum nur umformt:
 `$entity->getUpdatedAt()->format('Y-m-d')`.
 
 **Grenze des Werkzeugs.** Es findet Stellen, an denen „jetzt" entsteht. Was
-erst über mehrere Zeilen zum Kalendertag wird, sieht es nur am Anfang, und
-fremde Bibliotheken (Carbon, moment) kennt es nicht.
+erst über mehrere Zeilen zum Kalendertag wird, sieht es nur am Anfang. Nicht
+erkannt werden fremde Bibliotheken (Carbon, moment), `mktime()` und
+`getdate()`, zusammengesetzte Ausdrücke wie `new DateTime("+$n days")` und der
+Inhalt von Heredocs. Ein `new DateTime(` mit offener Klammer am Zeilenende wird
+immer gemeldet, weil das Argument in der Folgezeile steht.
 
 **Einführen in einer App.** Der erste Lauf meldet je App 8 bis 22 Stellen
 (gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel
