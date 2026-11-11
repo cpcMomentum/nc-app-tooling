@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
@@ -223,6 +223,29 @@ if (!dateien.length) process.exit(0)
 				console.log(red('\n[Notification Check] BLOCKED') + '\n')
 				console.log('Der Notifier uebergibt einem NC-Setter einen Wert, den dieser')
 				console.log('ablehnt — die Benachrichtigung kommt unvollstaendig an.\n')
+				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
+				process.exit(1)
+			}
+		}
+	}
+}
+
+// --- 7. Kalendertage aus UTC ------------------------------------------------
+// Nur in Apps, die den Check eingefuehrt haben (Skript timezone:check): der
+// erste Lauf meldet Bestand, der erst einmal durchgesehen sein muss.
+{
+	const hatSkript = existsSync('package.json')
+		&& Boolean(JSON.parse(readFileSync('package.json', 'utf8')).scripts?.['timezone:check'])
+	if (hatSkript && dateien.some((f) => /^(lib\/.*\.php|src\/.*\.(js|ts|jsx|tsx|mjs|vue))$/.test(f))) {
+		const bin = join('node_modules', '.bin', 'nc-timezone-check')
+		if (!existsSync(bin)) {
+			console.log(yellow('[Timezone Check] uebersprungen — nc-timezone-check fehlt.'))
+			console.log('Einmalig  npm install  ausfuehren; im CI laeuft die Pruefung ohnehin.')
+		} else {
+			try {
+				execFileSync(bin, [], { stdio: 'inherit' })
+			} catch {
+				console.log(red('\n[Timezone Check] BLOCKED') + '\n')
 				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
 				process.exit(1)
 			}
