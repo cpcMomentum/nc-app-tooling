@@ -78,6 +78,7 @@ jobs:
         run: |
           case "$NEU" in ''|*[!0-9]*) echo "FEHLER: unerwartete Version '$NEU'"; exit 1;; esac
           base="${BASE_INPUT:-$DEFAULT_BRANCH}"
+          [ -n "$base" ] || base="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
           branch="chore/nc-compat-$NEU"
           titel="nc-compat: max-version auf NC ${NEU} heben (geprüft)"
 
