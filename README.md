@@ -629,6 +629,85 @@ dem Job-PHP auch auflöst, muss der Platform-Pin für den Wegwerf-Testlauf weich
 - **`nc-compat.yml`**, vor dem Kompat-Test: `composer config --unset platform.php`,
   damit der Wächter beim nächsten Major wirklich testet.
 
+## Geteilter Workflow `e2e`
+
+Playwright-Klicktests gegen eine **echte, bedienbare Nextcloud**. Viele Fehler
+zeigen sich nur beim Durchklicken: ein sichtbares, aber verdecktes Schließen-X,
+eine Frist, die sich eintragen lässt und vom Server still verworfen wird.
+Unit-Tests sehen so etwas prinzipbedingt nicht (nc-app-tooling#34).
+
+Der Workflow baut die Instanz und startet die Tests. Die **Specs gehören der
+App**: `playwright.config.ts`, `tests/e2e/*.spec.ts` und `@playwright/test` als
+devDependency. Die App behält außerdem Auslöser und Concurrency:
+
+```yaml
+name: e2e
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    uses: cpcMomentum/nc-app-tooling/.github/workflows/e2e.yml@v1.21.0
+```
+
+Was der Lauf tut, in dieser Reihenfolge:
+
+1. `nextcloud/server` auschecken, Zweig `stable<min-version>` aus `info.xml`
+   (die Untergrenze, dort landet ein Bruch zuerst). Die App-ID kommt ebenfalls
+   aus `info.xml`.
+2. `composer install` in der App, falls sie eine `composer.json` hat.
+   Nextcloud mit SQLite installieren, App aktivieren (fährt die Migrationen),
+   `password_policy` abschalten, Hintergrundjobs auf System-Cron stellen.
+3. Das Provisionierungsskript der App ausführen (Testkonten, Testdaten).
+4. Nextcloud über `php -S` mit vier Arbeitern unter `http://localhost:8080`
+   ausliefern. Ohne Rewrite, die App liegt also unter `/index.php/apps/<id>/`.
+5. `npm ci`, Chromium installieren, `npx playwright test`.
+6. Im Fehlerfall: Playwright-Bericht als Artefakt, dazu `php -S`-Protokoll und
+   `nextcloud.log` im Lauf.
+
+| Eingabe | Standard | |
+|---|---|---|
+| `php-version` | `8.4` | PHP des Servers |
+| `node-version` | `24` | Node für Playwright |
+| `server-branch` | leer | Zweig von `nextcloud/server`, leer = `stable<min-version>` |
+| `provision` | `tests/e2e/provision.sh` | Pfad zum Skript der App für Testkonten (nur der Pfad, keine Argumente), leer = keins |
+| `url-env` | `NC_E2E_URL` | Variable, in der die Tests die Adresse finden |
+| `occ-env` | `NC_OCC` | Variable, in der das Provisionierungsskript den `occ`-Aufruf findet (`php occ`) |
+
+Variablennamen bestehen aus Großbuchstaben, Ziffern und Unterstrich. Reservierte
+Namen wie `PATH` oder `GITHUB_*` lehnt der Lauf ab.
+
+Das Provisionierungsskript läuft im Serververzeichnis und muss ausführbar und
+idempotent sein. Lokal bekommt es über dieselbe Variable den Container-Aufruf
+(`docker exec -u www-data -i nextcloud-dev php occ`), damit es nicht zwei
+Skripte gibt, die auseinanderlaufen.
+
+**Zwei feste Regeln, die der Workflow durchsetzt:**
+
+- **`npm ci`, nie `rm -f package-lock.json && npm install`.** Der alte Weg löste
+  die Abhängigkeiten bei jedem Lauf live gegen die Registry auf. Am 28.09.2026
+  ergab das drei rote Läufe, weil eine frisch veröffentlichte Version noch nicht
+  verteilt war. Das Lockfile pinnte eine ältere, mit `npm ci` wäre der Lauf grün
+  gewesen. In keinem Workflow wird die Lock-Datei gelöscht.
+- **Kein `npm run build`.** Getestet wird das eingecheckte Bundle in `js/` und
+  `css/`, denn das wird ausgeliefert. Ein Neubau im Lauf würde einen vergessenen
+  Build verdecken.
+
+Der Job heißt `E2E (Chromium)`. Als Statuscheck erscheint er in der App als
+`<Job des Aufrufers> / E2E (Chromium)`, im Beispiel also `e2e / E2E (Chromium)`.
+Wer ihn in ein Ruleset aufnimmt, muss genau diesen Namen eintragen.
+
 ## Abgelöst: `nc-bundle-check`
 
 Gab es von v1.6.0 bis v1.10.0. Er fing vergessene Frontend-Builds über eine
