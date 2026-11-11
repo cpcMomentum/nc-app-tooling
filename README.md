@@ -562,6 +562,74 @@ Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
 | 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
 | 1 | Schema-Fehler oder kaputtes JSON |
 
+## `nc-timezone-check`
+
+Meldet Stellen, an denen aus „jetzt" ein **Kalendertag in UTC** wird.
+
+```bash
+npx nc-timezone-check          # im Wurzelverzeichnis der App
+```
+
+Nextcloud setzt die PHP-Laufzeitzone fest auf UTC, und `toISOString()` im
+Browser liefert ebenfalls UTC. Für einen Zeitstempel (`createdAt`, Audit,
+Token-Ablauf) ist das richtig. Für einen Kalendertag ist es zwischen 00:00 und
+01:00 Uhr (Winterzeit) bzw. 02:00 Uhr (Sommerzeit) noch der **Vortag**.
+
+worktime hatte diese Fehlerklasse dreimal (Feiertage um einen Tag verschoben,
+„heute" in UTC, Stempeluhr bucht zwei Stunden zu früh). Der Audit der Flotte
+(nc-app-tooling#35) fand sie danach in jeder weiteren App, am schwersten in
+rechnungswerk: Rechnungsdatum, Nummernjahr und Fälligkeit kamen beim
+Festschreiben aus UTC. Wer am 1.1. um 00:30 Uhr festschreibt, bekommt das Datum
+31.12. und eine Nummer aus dem Kreis des Vorjahres.
+
+**Die Regel.** Ein Muster kann Zeitstempel und Kalendertag nicht unterscheiden.
+Deshalb muss jede „jetzt"-Stelle eines von dreien sein:
+
+1. **erkennbar ein Zeitstempel:** Der Wert geht in derselben Zeile in einen
+   `…At`-Setter (`setCreatedAt(new DateTime())`), an `setDateTime(` einer
+   Benachrichtigung, in ein `'…_at'`-Feld oder einen `'…At' =>`-Schlüssel.
+2. **mit Zeitzone gerechnet:** `new DateTime('now', $tz)`. Das ist der Weg für
+   Kalendertage, Muster siehe worktime (`UserTimeZone`, `LocalDate::today()`).
+3. **begründet:** ein Kommentar `tz-ok: <Grund>` in derselben oder der Zeile
+   davor. Ohne Grund zählt die Marke nicht.
+
+```php
+// tz-ok: Zeitstempel fuer createdAt und updatedAt
+$now = new DateTime();
+```
+
+Gemeldet wird in `lib/` (ohne `lib/Migration/`):
+
+| Muster | Beispiel |
+|---|---|
+| `new DateTime()` ohne Argument | `$now = new DateTime();` |
+| `new DateTime('now'/'today'/'+1 day' …)` ohne Zeitzone | `new DateTime('today')` |
+| dasselbe mit fest verdrahtetem UTC | `new DateTime('now', new DateTimeZone('UTC'))` |
+| `date('…')` ohne Zeitpunkt | `(int)date('Y')` |
+| `strtotime('today' …)` | |
+| `ITimeFactory::getDateTime()` ohne weitere Zeitzone in der Zeile | `$this->time->getDateTime()->format('Y-m-d')` |
+
+Und in `src/` (ohne `*.spec.*` und `*.test.*`):
+
+| Muster | Beispiel |
+|---|---|
+| `toISOString()` auf den Tag gekürzt | `new Date().toISOString().substring(0, 10)` |
+
+Nicht gemeldet wird, was ein gegebenes Datum nur umformt:
+`new DateTime($eingabe)`, `date('d.m.Y', $timestamp)`,
+`$entity->getUpdatedAt()->format('Y-m-d')`.
+
+**Einführen in einer App.** Der erste Lauf meldet je App 5 bis 25 Stellen
+(gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel
+begründen. Erst wenn der Lauf grün ist, kommt er in CI und Pre-Commit. Das
+Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
+Flotte war ein unscheinbares `$now = new DateTime();`.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | keine Befunde |
+| 1 | Befunde, oder kein App-Verzeichnis |
+
 ## Composite Action `ocp-versionen`
 
 Leitet die zu testenden `nextcloud/ocp`-Versionen aus `appinfo/info.xml` ab und
