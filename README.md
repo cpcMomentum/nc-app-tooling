@@ -701,6 +701,38 @@ Flotte war ein unscheinbares `$now = new DateTime();`.
 |---|---|
 | 0 | keine Befunde |
 | 1 | Befunde, oder kein App-Verzeichnis |
+## Verbreitung messen (`verbreitung.yml`)
+
+Der Workflow `verbreitung` misst **quartalsweise** (1.1., 1.4., 1.7., 1.10.) die
+Download-Zähler der Release-Tarballs aller Flotten-Apps und schreibt das
+Ergebnis als Kommentar in nc-app-tooling#19. Von Hand: `gh workflow run
+verbreitung.yml`, oder lokal ohne Posten `node .github/scripts/verbreitung.mjs`.
+
+Der App Store nennt keine Installationszahlen. Die Store-Einträge verlinken aber
+die Tarballs auf GitHub, und GitHub zählt jeden Abruf. Zwei Zahlen je App:
+
+- **Downloads gesamt:** Installationen, Updates und Abrufe des Stores zusammen.
+  Das ist **nicht** die Zahl der Instanzen.
+- **Downloads des ausgerollten Release:** das jüngste Release, das mindestens
+  21 Tage alt ist. Bis dahin haben die meisten Instanzen aktualisiert, die Zahl
+  ist die Näherung für aktive Instanzen.
+
+Jeder Kommentar trägt seine Messung maschinenlesbar in einem HTML-Kommentar.
+Der nächste Lauf liest die jüngste davon und rechnet die Veränderung. Hat das
+ausgerollte Release inzwischen gewechselt, wird nicht verrechnet, sondern der
+alte Wert daneben genannt. Eine eigene Ablage braucht es nicht.
+
+Das Issue ist öffentlich. Als Vormessung zählt deshalb nur ein Kommentar des
+Workflows selbst oder eines Mitglieds der Organisation, und nur in exakt der
+erwarteten Form. Sonst könnte ein Fremder dem nächsten Lauf Zahlen und Text
+unterschieben.
+
+„Jüngstes Release" heißt: zuletzt veröffentlicht. Ein nachgeschobener Patch auf
+einer alten Linie würde deshalb nach 21 Tagen zum Maßstab. Das kam bisher nicht
+vor, steht aber hier, damit ein Einbruch der Zahl richtig gelesen wird.
+
+Der Workflow läuft mit dem `GITHUB_TOKEN` dieses Repos (`issues: write`). Die
+App-Repos sind öffentlich, ihre Release-Zahlen sind ohne weitere Rechte lesbar.
 
 ## Composite Action `ocp-versionen`
 
