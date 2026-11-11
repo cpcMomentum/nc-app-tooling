@@ -1,0 +1,7 @@
+[
+	{ "uid": "admin", "passwort": "admin", "name": "admin", "gruppen": ["admin"], "zweck": "Administrator, alle Apps" },
+	{ "uid": "pw-e2e-intern", "passwort": "e2e-Pw-2026-Test!", "name": "E2E Dienstleisterseite", "gruppen": [], "zweck": "projektwerk e2e, Dienstleisterseite" },
+	{ "uid": "pw-e2e-kunde", "passwort": "e2e-Pw-2026-Test!", "name": "E2E Kundenseite", "gruppen": [], "zweck": "projektwerk e2e, Kundenseite" },
+	{ "uid": "testlea", "passwort": "e2e-Pw-2026-Test!", "name": "Lea Testfall", "gruppen": [], "zweck": "Nicht-Admin, WorkTime-Mitarbeiterin" },
+	{ "uid": "pw-anna", "passwort": "e2e-Pw-2026-Test!", "name": "Anna Reuter", "gruppen": [], "zweck": "Nicht-Admin, WorkTime-Mitarbeiterin" }
+]

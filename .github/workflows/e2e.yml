@@ -1,0 +1,198 @@
+name: e2e
+
+# Geteilte Playwright-Klicktests der App-Flotte gegen eine echte Nextcloud, Beschreibung im README.
+
+on:
+  workflow_call:
+    inputs:
+      php-version:
+        description: 'PHP-Version des Servers.'
+        type: string
+        default: '8.4'
+      node-version:
+        description: 'Node-Version fuer Playwright.'
+        type: string
+        default: '24'
+      server-branch:
+        description: 'Zweig von nextcloud/server. Leer = stable<min-version> aus info.xml.'
+        type: string
+        default: ''
+      provision:
+        description: 'Skript der App, das Testkonten und Testdaten anlegt (relativ zur App). Leer = keins.'
+        type: string
+        default: 'tests/e2e/provision.sh'
+      url-env:
+        description: 'Name der Umgebungsvariable, in der die Tests die Adresse der Instanz finden.'
+        type: string
+        default: 'NC_E2E_URL'
+      occ-env:
+        description: 'Name der Umgebungsvariable, in der das Provisionierungsskript den occ-Aufruf findet.'
+        type: string
+        default: 'NC_OCC'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    name: E2E (Chromium)
+
+    steps:
+      # Erst an einen Nebenpfad: der Serverzweig wird aus info.xml abgeleitet.
+      - name: App auschecken
+        uses: actions/checkout@v4
+        with:
+          path: app-src
+
+      - name: App-ID und NC-Zweig aus info.xml ableiten
+        id: derive
+        working-directory: app-src
+        env:
+          SERVER_BRANCH: ${{ inputs.server-branch }}
+          URL_ENV: ${{ inputs.url-env }}
+          OCC_ENV: ${{ inputs.occ-env }}
+        run: |
+          app=$(grep -oE '<id>[a-z0-9_]+</id>' appinfo/info.xml | head -n 1 | sed -E 's/<\/?id>//g')
+          if [ -z "$app" ]; then
+            echo "::error::Konnte die App-ID nicht aus info.xml lesen"; exit 1
+          fi
+          for name in "$URL_ENV" "$OCC_ENV"; do
+            if ! [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || [[ "$name" =~ ^(PATH|HOME|CI|NODE_OPTIONS|BASH_ENV)$|^(GITHUB|RUNNER|LD)_ ]]; then
+              echo "::error::Ungueltiger oder reservierter Variablenname: $name"; exit 1
+            fi
+          done
+          branch="$SERVER_BRANCH"
+          if [ -z "$branch" ]; then
+            min=$(grep -oE '<nextcloud[^>]*/>' appinfo/info.xml | grep -oE 'min-version="[0-9]+"' | grep -oE '[0-9]+' || true)
+            if [ -z "$min" ]; then
+              echo "::error::Konnte min-version nicht aus info.xml lesen"; exit 1
+            fi
+            # Die Untergrenze: dort landet ein Bruch zuerst.
+            branch="stable$min"
+          fi
+          if ! [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::Ungueltiger Serverzweig: $branch"; exit 1
+          fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "App: $app, Serverzweig: $branch"
+
+      - name: Nextcloud-Server auschecken
+        uses: actions/checkout@v4
+        with:
+          repository: nextcloud/server
+          ref: ${{ steps.derive.outputs.branch }}
+          submodules: true
+          fetch-depth: 1
+          path: server
+
+      - name: App nach apps/ verschieben
+        env:
+          APP: ${{ steps.derive.outputs.app }}
+        run: mv app-src "server/apps/$APP"
+
+      - name: PHP einrichten
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php-version }}
+          extensions: bz2, ctype, curl, dom, fileinfo, gd, gmp, iconv, intl, json, mbstring, openssl, pcntl, posix, session, simplexml, sqlite3, pdo_sqlite, xml, xmlreader, xmlwriter, zip, zlib
+          coverage: none
+          tools: composer:v2
+
+      - name: Abhaengigkeiten der App installieren
+        working-directory: server/apps/${{ steps.derive.outputs.app }}
+        run: |
+          if [ -f composer.json ]; then
+            composer install --no-interaction --no-progress --prefer-dist
+          fi
+
+      - name: Nextcloud installieren (SQLite)
+        working-directory: server
+        run: |
+          mkdir -p data
+          php occ maintenance:install \
+            --database sqlite \
+            --admin-user admin \
+            --admin-pass admin-pass-for-ci \
+            --data-dir "$PWD/data"
+
+      - name: App aktivieren (faehrt die Migration)
+        working-directory: server
+        env:
+          APP: ${{ steps.derive.outputs.app }}
+        run: |
+          php occ app:enable "$APP"
+          php occ config:app:get "$APP" installed_version
+
+      # Die Richtlinie fragt je Konto haveibeenpwned.com: ein Netzaufruf, der hier nichts prueft.
+      - name: Passwortrichtlinie abschalten
+        working-directory: server
+        run: php occ app:disable password_policy || true
+
+      # Sonst startet jede Seite den AJAX-Cron, dessen Schreibzugriffe SQLite fuer Testanfragen sperren.
+      - name: Hintergrundjobs auf System-Cron stellen
+        working-directory: server
+        run: php occ background:cron
+
+      - name: Testkonten und Testdaten anlegen
+        if: inputs.provision != ''
+        working-directory: server
+        env:
+          APP: ${{ steps.derive.outputs.app }}
+          PROVISION: ${{ inputs.provision }}
+          OCC_ENV: ${{ inputs.occ-env }}
+        run: env "$OCC_ENV=php occ" "apps/$APP/$PROVISION"
+
+      # Mehrere Arbeiter, sonst blockiert sich der Browser bei parallelen Anfragen selbst.
+      - name: Nextcloud ausliefern
+        working-directory: server
+        env:
+          URL_ENV: ${{ inputs.url-env }}
+        run: |
+          PHP_CLI_SERVER_WORKERS=4 php -S localhost:8080 -t . &> "$RUNNER_TEMP/phpserver.log" &
+          echo "${URL_ENV}=http://localhost:8080" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/index.php/login || true)
+            if [ "$code" = "200" ]; then echo "Erreichbar nach ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "::error::Nextcloud wurde unter http://localhost:8080 nicht erreichbar"
+          cat "$RUNNER_TEMP/phpserver.log"
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      # npm ci und kein Build: getestet wird das eingecheckte Bundle mit den Versionen aus dem Lockfile.
+      - name: Frontend-Abhaengigkeiten installieren
+        working-directory: server/apps/${{ steps.derive.outputs.app }}
+        run: npm ci
+
+      - name: Browser installieren
+        working-directory: server/apps/${{ steps.derive.outputs.app }}
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E-Tests
+        working-directory: server/apps/${{ steps.derive.outputs.app }}
+        run: npx playwright test
+
+      - name: Bericht sichern
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-bericht-${{ steps.derive.outputs.branch }}
+          path: |
+            server/apps/${{ steps.derive.outputs.app }}/playwright-report/
+            server/apps/${{ steps.derive.outputs.app }}/test-results/
+          retention-days: 7
+
+      # Der Browser sieht nur eine 500, die Begruendung steht im Serverprotokoll.
+      - name: Serverprotokoll ausgeben
+        if: failure()
+        run: |
+          echo "=== php -S ==="
+          cat "$RUNNER_TEMP/phpserver.log" || true
+          echo "=== nextcloud.log ==="
+          tail -n 200 server/data/nextcloud.log || true

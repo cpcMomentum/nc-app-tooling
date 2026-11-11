@@ -14,6 +14,7 @@
         "nc-appstore-token": "bin/appstore-token.mjs",
         "nc-compat-check": "bin/compat-check.mjs",
         "nc-whatsnew-check": "bin/whatsnew-check.mjs",
+        "nc-dev-testkonten": "bin/dev-testkonten.mjs",
         "nc-timezone-check": "bin/timezone-check.mjs"
     },
     "scripts": {

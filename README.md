@@ -562,6 +562,57 @@ Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
 | 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
 | 1 | Schema-Fehler oder kaputtes JSON |
 
+## `nc-dev-testkonten`
+
+Stellt die **festen Testkonten der lokalen Dev-Instanz** her (`nextcloud-dev`,
+`localhost:8080`). Alle Apps der Flotte testen gegen dieselbe Instanz. Solange
+jede Session nach eigenem Gutdünken Konten anlegte und Passwörter setzte,
+funktionierten Konten plötzlich nicht mehr, auf die sich andere verließen. Am
+02.10.2026 wurde `admin` / `admin` abgewiesen, und niemand konnte sagen, wer
+das Passwort geändert hatte (nc-app-tooling#36).
+
+```bash
+npx nc-dev-testkonten            # fehlende Konten anlegen, alle auf ihr festes Passwort setzen
+npx nc-dev-testkonten --list     # Konten, Passwörter und Zweck zeigen, nichts ändern
+```
+
+Aus dem Flotten-Ordner geht es ohne Installation:
+`node nc-app-tooling/bin/dev-testkonten.mjs`.
+
+**Die Liste steht an genau einer Stelle:** `bin/dev-testkonten.json` (Konto,
+Passwort, Anzeigename, Gruppen, Zweck). Fest gesetzt ist `admin` / `admin`. Die
+Passwörter stehen dort im Klartext, und das ist Absicht: Es sind Wegwerf-Konten
+einer lokalen Instanz, kein Geheimnis. Braucht eine App ein weiteres Konto,
+kommt es per PR in diese Liste, nicht per Hand in die Instanz.
+
+Was das Werkzeug tut und lässt:
+
+- Fehlt ein Konto der Liste, legt es das an. Ist es da, aktiviert es das Konto
+  (falls jemand es gesperrt hat) und setzt das Passwort auf den festen Wert.
+  Ein zweiter Lauf ändert am Zustand nichts mehr.
+- Es ordnet die Gruppen der Liste zu und legt eine fehlende Gruppe an.
+- Konten, die nicht in der Liste stehen, fasst es **nie** an, und es löscht
+  nichts.
+- App-eigene Daten (etwa ein WorkTime-Mitarbeiterprofil) bleiben Sache der App.
+
+Die Regel dazu: **Keine Session legt eigene Konten an oder ändert Passwörter.**
+Klappt ein Login nicht, `nc-dev-testkonten` laufen lassen und es melden.
+
+Der `occ`-Aufruf kommt aus `NC_OCC`, Standard ist
+`docker exec -u www-data -e OC_PASS -i nextcloud-dev php occ`. Das Passwort
+geht über `OC_PASS` in die Umgebung (`--password-from-env`), nicht in die
+Prozessliste. Wer `NC_OCC` selbst setzt und `docker exec` nutzt, braucht
+`-e OC_PASS` darin. `NC_OCC` wird an Leerzeichen getrennt, Pfade mit
+Leerzeichen gehen darin nicht.
+
+Nur für die **lokale** Instanz. Die Konten der e2e-Läufe in GitHub Actions legt
+weiterhin das Provisionierungsskript der jeweiligen App an.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | alle Konten der Liste stehen |
+| 1 | `occ` nicht erreichbar, oder ein Schritt ist gescheitert (die übrigen Konten laufen trotzdem durch) |
+| 2 | unbekanntes Argument |
 ## `nc-timezone-check`
 
 Meldet Stellen, an denen aus „jetzt" ein **Kalendertag in UTC** wird.
@@ -717,6 +768,85 @@ dem Job-PHP auch auflöst, muss der Platform-Pin für den Wegwerf-Testlauf weich
   (nur im Arbeitsverzeichnis des Laufs, nichts davon wird committet).
 - **`nc-compat.yml`**, vor dem Kompat-Test: `composer config --unset platform.php`,
   damit der Wächter beim nächsten Major wirklich testet.
+
+## Geteilter Workflow `e2e`
+
+Playwright-Klicktests gegen eine **echte, bedienbare Nextcloud**. Viele Fehler
+zeigen sich nur beim Durchklicken: ein sichtbares, aber verdecktes Schließen-X,
+eine Frist, die sich eintragen lässt und vom Server still verworfen wird.
+Unit-Tests sehen so etwas prinzipbedingt nicht (nc-app-tooling#34).
+
+Der Workflow baut die Instanz und startet die Tests. Die **Specs gehören der
+App**: `playwright.config.ts`, `tests/e2e/*.spec.ts` und `@playwright/test` als
+devDependency. Die App behält außerdem Auslöser und Concurrency:
+
+```yaml
+name: e2e
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    uses: cpcMomentum/nc-app-tooling/.github/workflows/e2e.yml@v1.21.0
+```
+
+Was der Lauf tut, in dieser Reihenfolge:
+
+1. `nextcloud/server` auschecken, Zweig `stable<min-version>` aus `info.xml`
+   (die Untergrenze, dort landet ein Bruch zuerst). Die App-ID kommt ebenfalls
+   aus `info.xml`.
+2. `composer install` in der App, falls sie eine `composer.json` hat.
+   Nextcloud mit SQLite installieren, App aktivieren (fährt die Migrationen),
+   `password_policy` abschalten, Hintergrundjobs auf System-Cron stellen.
+3. Das Provisionierungsskript der App ausführen (Testkonten, Testdaten).
+4. Nextcloud über `php -S` mit vier Arbeitern unter `http://localhost:8080`
+   ausliefern. Ohne Rewrite, die App liegt also unter `/index.php/apps/<id>/`.
+5. `npm ci`, Chromium installieren, `npx playwright test`.
+6. Im Fehlerfall: Playwright-Bericht als Artefakt, dazu `php -S`-Protokoll und
+   `nextcloud.log` im Lauf.
+
+| Eingabe | Standard | |
+|---|---|---|
+| `php-version` | `8.4` | PHP des Servers |
+| `node-version` | `24` | Node für Playwright |
+| `server-branch` | leer | Zweig von `nextcloud/server`, leer = `stable<min-version>` |
+| `provision` | `tests/e2e/provision.sh` | Pfad zum Skript der App für Testkonten (nur der Pfad, keine Argumente), leer = keins |
+| `url-env` | `NC_E2E_URL` | Variable, in der die Tests die Adresse finden |
+| `occ-env` | `NC_OCC` | Variable, in der das Provisionierungsskript den `occ`-Aufruf findet (`php occ`) |
+
+Variablennamen bestehen aus Großbuchstaben, Ziffern und Unterstrich. Reservierte
+Namen wie `PATH` oder `GITHUB_*` lehnt der Lauf ab.
+
+Das Provisionierungsskript läuft im Serververzeichnis und muss ausführbar und
+idempotent sein. Lokal bekommt es über dieselbe Variable den Container-Aufruf
+(`docker exec -u www-data -i nextcloud-dev php occ`), damit es nicht zwei
+Skripte gibt, die auseinanderlaufen.
+
+**Zwei feste Regeln, die der Workflow durchsetzt:**
+
+- **`npm ci`, nie `rm -f package-lock.json && npm install`.** Der alte Weg löste
+  die Abhängigkeiten bei jedem Lauf live gegen die Registry auf. Am 28.09.2026
+  ergab das drei rote Läufe, weil eine frisch veröffentlichte Version noch nicht
+  verteilt war. Das Lockfile pinnte eine ältere, mit `npm ci` wäre der Lauf grün
+  gewesen. In keinem Workflow wird die Lock-Datei gelöscht.
+- **Kein `npm run build`.** Getestet wird das eingecheckte Bundle in `js/` und
+  `css/`, denn das wird ausgeliefert. Ein Neubau im Lauf würde einen vergessenen
+  Build verdecken.
+
+Der Job heißt `E2E (Chromium)`. Als Statuscheck erscheint er in der App als
+`<Job des Aufrufers> / E2E (Chromium)`, im Beispiel also `e2e / E2E (Chromium)`.
+Wer ihn in ein Ruleset aufnimmt, muss genau diesen Namen eintragen.
 
 ## Abgelöst: `nc-bundle-check`
 
