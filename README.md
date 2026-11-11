@@ -585,13 +585,21 @@ Festschreiben aus UTC. Wer am 1.1. um 00:30 Uhr festschreibt, bekommt das Datum
 **Die Regel.** Ein Muster kann Zeitstempel und Kalendertag nicht unterscheiden.
 Deshalb muss jede „jetzt"-Stelle eines von dreien sein:
 
-1. **erkennbar ein Zeitstempel:** Der Wert geht in derselben Zeile in einen
-   `…At`-Setter (`setCreatedAt(new DateTime())`), an `setDateTime(` einer
-   Benachrichtigung, in ein `'…_at'`-Feld oder einen `'…At' =>`-Schlüssel.
+1. **erkennbar ein Zeitstempel:** Der Wert steht im Argument eines bekannten
+   Zeitstempel-Setters (`setCreatedAt(new DateTime())`), von `setDateTime(`
+   einer Benachrichtigung, eines `->set('updated_at', …)` oder eines
+   `'exportedAt' =>`-Schlüssels. Bekannt ist eine feste Liste: Created, Updated,
+   Modified, Deleted, Sent, Seen, Read, Processed, Approved, Submitted, Locked,
+   Cancelled, Archived, Closed, Revoked, Added, Assigned, Done, Frozen,
+   Committed, Exported, Imported, LastUsed, Status. Ein `setPurchasedAt(` oder
+   `setDueAt(` zählt **nicht**: Hinter solchen Namen steckt oft ein Kalendertag
+   (so gefunden in vinarium, wo `purchased_at` das Kaufdatum ist).
 2. **mit Zeitzone gerechnet:** `new DateTime('now', $tz)`. Das ist der Weg für
    Kalendertage, Muster siehe worktime (`UserTimeZone`, `LocalDate::today()`).
-3. **begründet:** ein Kommentar `tz-ok: <Grund>` in derselben oder der Zeile
-   davor. Ohne Grund zählt die Marke nicht.
+3. **begründet:** ein Kommentar `tz-ok: <Grund>` in derselben Zeile oder in
+   einer reinen Kommentarzeile direkt davor. Ohne Grund zählt die Marke nicht,
+   in einer Zeichenkette auch nicht, und eine Marke am Zeilenende gilt nur für
+   ihre eigene Zeile.
 
 ```php
 // tz-ok: Zeitstempel fuer createdAt und updatedAt
@@ -602,22 +610,32 @@ Gemeldet wird in `lib/` (ohne `lib/Migration/`):
 
 | Muster | Beispiel |
 |---|---|
-| `new DateTime()` ohne Argument | `$now = new DateTime();` |
-| `new DateTime('now'/'today'/'+1 day' …)` ohne Zeitzone | `new DateTime('today')` |
+| `new DateTime()` ohne Argument, mit `null` oder `''` | `$now = new DateTime();` |
+| `new DateTime('now'/'today'/'+1 day'/'next month' …)` ohne Zeitzone | `new DateTime('today')` |
 | dasselbe mit fest verdrahtetem UTC | `new DateTime('now', new DateTimeZone('UTC'))` |
-| `date('…')` ohne Zeitpunkt | `(int)date('Y')` |
+| `date_create()` und `date_create_immutable()` ebenso | `date_create('today')` |
+| `date('…')`, `gmdate('…')`, `idate('…')` ohne Zeitpunkt oder mit `time()` | `(int)date('Y')`, `date('Y-m-d', time())` |
 | `strtotime('today' …)` | |
-| `ITimeFactory::getDateTime()` ohne weitere Zeitzone in der Zeile | `$this->time->getDateTime()->format('Y-m-d')` |
+| `getDateTime()` und `now()->format(` der `ITimeFactory` | `$this->time->getDateTime()->format('Y-m-d')` |
 
-Und in `src/` (ohne `*.spec.*` und `*.test.*`):
+Und in `src/` (`.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.vue`, ohne `*.spec.*`,
+`*.test.*` und `*.d.ts`):
 
 | Muster | Beispiel |
 |---|---|
-| `toISOString()` auf den Tag gekürzt | `new Date().toISOString().substring(0, 10)` |
+| `toISOString()` oder `toJSON()` auf Tag, Monat oder Jahr gekürzt | `new Date().toISOString().substring(0, 10)` |
+
+Kommentare sind kein Code, Zeichenketten schon. Eine Anweisung, die sich über
+mehrere Zeilen zieht, wird nur an der ersten Zeile erkannt. Ordner
+`node_modules`, `__tests__` und `__mocks__` werden nicht gelesen.
 
 Nicht gemeldet wird, was ein gegebenes Datum nur umformt:
 `new DateTime($eingabe)`, `date('d.m.Y', $timestamp)`,
 `$entity->getUpdatedAt()->format('Y-m-d')`.
+
+**Grenze des Werkzeugs.** Es findet Stellen, an denen „jetzt" entsteht. Was
+erst über mehrere Zeilen zum Kalendertag wird, sieht es nur am Anfang, und
+fremde Bibliotheken (Carbon, moment) kennt es nicht.
 
 **Einführen in einer App.** Der erste Lauf meldet je App 8 bis 22 Stellen
 (gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel

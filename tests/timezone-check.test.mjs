@@ -41,6 +41,31 @@ const BEFUNDE = [
 	'$t = strtotime(\'today\');',
 	'return $due->format(\'Y-m-d\') < $this->time->getDateTime()->format(\'Y-m-d\');',
 	'$settings->setNumberCounterYear((int)(new DateTime())->format(\'Y\'));',
+	'$purchase->setPurchasedAt($this->parseDate($x) ?? new DateTime());',
+	'$invoice->setDueAt(new DateTime());',
+	'$invoice->setPaidAt(new DateTime(\'today\'));',
+	'$x->setTimestamp(strtotime(\'today\'));',
+	'$qb->andWhere($qb->expr()->lt(\'due_at\', $qb->createNamedParameter(date(\'Y-m-d\'))));',
+	'if ($row[\'created_at\'] < date(\'Y-m-d\')) {}',
+	'$tag = date(\'Y-m-d\', time());',
+	'$tag = date(\'Y-m-d\', $this->timeFactory->getTime());',
+	'$tag = gmdate(\'Y-m-d\');',
+	'$jahr = idate(\'Y\');',
+	'$d = date_create();',
+	'$d = date_create_immutable(\'today\');',
+	'$tag = $this->timeFactory->now()->format(\'Y-m-d\');',
+	'$d = new DateTime(\'monday this week\');',
+	'$d = new DateTime("next month");',
+	'$d = new DateTime(\'1 month ago\');',
+	'$d = new DateTime(null);',
+	'$d = new DateTime(\'\');',
+	'$d = new \\Datetime();',
+	'$d = new DateTime(datetime: \'now\');',
+	'$d = new DateTime(',
+	'$d = $this->timeFactory->getDateTime(\'today\', new \\DateTimeZone(\'UTC\'));',
+	'/** doc */ $c = new DateTime();',
+	'#[Pure] function g() { return date(\'Y\'); }',
+	'$a = 1; $today = new DateTime(); $s = \'tz-ok: nur im String\';',
 ]
 
 const KEINE_BEFUNDE = [
@@ -59,6 +84,19 @@ const KEINE_BEFUNDE = [
 	'$this->update($entity);',
 	'$since = (new DateTime())->modify(\'-30 days\'); // tz-ok: rollendes Fenster, kein Kalendertag',
 	'// alt: $now = new DateTime();',
+	'$x = 5; // frueher new DateTime()',
+	'$x = 5; /* new DateTime() */',
+	'$x = 5; # date(\'Y\')',
+	'$x = $this->date(\'Y\');',
+	'$x = Util::date(\'Y\');',
+	'$x = $obj->getDateTime($y);',
+	'$z = new DateTimeZone(\'UTC\');',
+	'$d = new DateTime(\'2024-01-01\');',
+	'$t = strtotime(\'-1 day\', $basis);',
+	'$e->setLastUsedAt(new DateTime());',
+	'$e->setDatevStatusAt(new DateTime());',
+	'\'deletedAt\' => (new DateTime())->format(\'c\'),',
+	'$since = (new DateTime())->modify(\'-30 days\'); // TZ-OK: rollendes Fenster',
 ]
 
 for (const zeile of BEFUNDE) {
@@ -83,6 +121,32 @@ test('die Begruendung darf in der Zeile davor stehen, braucht aber einen Grund',
 	assert.equal(ohne.status, 1)
 })
 
+test('eine Marke am Zeilenende gilt nur fuer ihre Zeile', () => {
+	const ergebnis = lauf(app({ 'lib/A.php': php('$a = new DateTime(); // tz-ok: Zeitstempel\n\t\t$today = new DateTime();') }))
+	assert.equal(ergebnis.status, 1)
+	assert.ok(ergebnis.stdout.includes('lib/A.php:5 '), ergebnis.stdout)
+	assert.ok(!ergebnis.stdout.includes('lib/A.php:4 '))
+})
+
+test('eine Marke in einer Zeichenkette oder hinter fremdem Code der Vorzeile zaehlt nicht', () => {
+	for (const vorzeile of ['$s = \'tz-ok: im String\';', '$log->info(1); // tz-ok: nur Log']) {
+		const ergebnis = lauf(app({ 'lib/A.php': php(`${vorzeile}\n\t\t$today = new DateTime();`) }))
+		assert.equal(ergebnis.status, 1, vorzeile)
+	}
+})
+
+test('Blockkommentare ueber mehrere Zeilen sind kein Code, danach wird wieder geprueft', () => {
+	const ergebnis = lauf(app({ 'lib/A.php': php('/*\n\t\t$alt = new DateTime();\n\t\t*/\n\t\t$neu = new DateTime();') }))
+	assert.equal(ergebnis.status, 1)
+	assert.ok(ergebnis.stdout.includes('lib/A.php:7 '), ergebnis.stdout)
+	assert.match(ergebnis.stdout, /1 Stelle\(n\)/)
+})
+
+test('nur lib/Migration ist ausgenommen, kein gleichnamiger Ordner tiefer', () => {
+	const ergebnis = lauf(app({ 'lib/Db/Migration/X.php': php('$x = date(\'Y\');') }))
+	assert.equal(ergebnis.status, 1)
+})
+
 test('Frontend: toISOString() als Kalendertag ist ein Befund, lokale Bestandteile nicht', () => {
 	const ergebnis = lauf(app({
 		'src/a.vue': '<script>\nconst d = new Date().toISOString().substring(0, 10)\n</script>\n',
@@ -90,12 +154,15 @@ test('Frontend: toISOString() als Kalendertag ist ein Befund, lokale Bestandteil
 		'src/c.js': 'const tag = jetzt.toISOString().split(\'T\')[0]\n',
 		'src/d.ts': 'export const ok = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`\nexport const iso = (d: Date) => d.toISOString()\n',
 		'src/e.spec.ts': 'const d = new Date().toISOString().slice(0, 10)\n',
+		'src/f.spec.vue': '<script>\nconst d = new Date().toISOString().slice(0, 10)\n</script>\n',
+		'src/g.vue': '<template>\n<!-- d.toISOString().slice(0, 10) -->\n</template>\n<script>\nconst uhr = d.toISOString().split(\'T\')[1]\n</script>\n',
+		'src/h.tsx': 'const monat = d.toISOString()?.substring(0, 7)\n',
 	}))
 	assert.equal(ergebnis.status, 1)
-	for (const datei of ['src/a.vue:2', 'src/b.ts:1', 'src/c.js:1']) assert.ok(ergebnis.stdout.includes(datei), datei)
+	for (const datei of ['src/a.vue:2', 'src/b.ts:1', 'src/c.js:1', 'src/h.tsx:1']) assert.ok(ergebnis.stdout.includes(datei), datei)
 	assert.ok(!ergebnis.stdout.includes('src/d.ts'))
-	assert.ok(!ergebnis.stdout.includes('src/e.spec.ts'))
-	assert.match(ergebnis.stdout, /3 Stelle\(n\)/)
+	for (const datei of ['src/e.spec.ts', 'src/f.spec.vue', 'src/g.vue']) assert.ok(!ergebnis.stdout.includes(datei), datei)
+	assert.match(ergebnis.stdout, /4 Stelle\(n\)/)
 })
 
 test('Migrationen werden nicht geprueft', () => {
