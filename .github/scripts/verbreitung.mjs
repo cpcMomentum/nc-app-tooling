@@ -15,6 +15,9 @@
  * der naechste Lauf die Veraenderung, eine eigene Ablage braucht es nicht.
  */
 
+import { realpathSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+
 const ORG = 'cpcMomentum'
 const APPS = ['worktime', 'contractmanager', 'rechnungswerk', 'vinarium', 'projektwerk']
 const MESS_REPO = process.env.VERBREITUNG_REPO ?? 'cpcMomentum/nc-app-tooling'
@@ -74,13 +77,31 @@ export function kommentar(messung, vorher) {
 	].join('\n')
 }
 
-/** Liest die juengste Messung aus den Kommentaren des Issues. */
+const VERTRAUT = ['OWNER', 'MEMBER', 'COLLABORATOR']
+const vonUns = (k) => k.user?.login === 'github-actions[bot]' || VERTRAUT.includes(k.author_association)
+
+const istZahl = (n) => Number.isInteger(n) && n >= 0
+const istAusgerollt = (a) => a === null
+	|| (typeof a === 'object' && /^[\w.+-]+$/.test(a.tag ?? '') && /^\d{4}-\d{2}-\d{2}$/.test(a.datum ?? '') && istZahl(a.downloads))
+
+/** Eine Messung aus einem Kommentar geht ungefiltert in den naechsten Kommentar: nur exakt die erwartete Form zaehlt. */
+export function gueltig(m) {
+	return typeof m === 'object' && m !== null
+		&& /^\d{4}-\d{2}-\d{2}$/.test(m.datum ?? '')
+		&& typeof m.apps === 'object' && m.apps !== null
+		&& Object.entries(m.apps).every(([app, a]) => APPS.includes(app)
+			&& typeof a === 'object' && a !== null && istZahl(a.gesamt) && istZahl(a.releases) && istAusgerollt(a.ausgerollt))
+}
+
+/** Liest die juengste Messung aus den Kommentaren des Issues. Das Issue ist oeffentlich, Fremdkommentare zaehlen nicht. */
 export function letzteMessung(kommentare) {
 	for (const k of [...kommentare].reverse()) {
+		if (!vonUns(k)) continue
 		const treffer = (k.body ?? '').match(new RegExp(`<!-- ${MARKE} (\\{.*\\}) -->`))
 		if (!treffer) continue
 		try {
-			return JSON.parse(treffer[1])
+			const messung = JSON.parse(treffer[1])
+			if (gueltig(messung)) return messung
 		} catch {
 			continue
 		}
@@ -91,6 +112,7 @@ export function letzteMessung(kommentare) {
 async function github(pfad, optionen = {}) {
 	const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
 	const antwort = await fetch(`https://api.github.com/${pfad}`, {
+		signal: AbortSignal.timeout(30_000),
 		...optionen,
 		headers: {
 			'User-Agent': 'nc-app-tooling-verbreitung',
@@ -99,14 +121,17 @@ async function github(pfad, optionen = {}) {
 			...optionen.headers,
 		},
 	})
-	if (!antwort.ok) throw new Error(`GitHub ${antwort.status} bei ${pfad}`)
+	if (!antwort.ok) {
+		const limit = antwort.status === 403 && !token ? ' (ohne GH_TOKEN gilt ein enges Anfragelimit)' : ''
+		throw new Error(`GitHub ${antwort.status} bei ${pfad}${limit}`)
+	}
 	return antwort.json()
 }
 
-async function alleSeiten(pfad) {
+export async function alleSeiten(pfad, hole = github) {
 	const alles = []
 	for (let seite = 1; ; seite++) {
-		const teil = await github(`${pfad}${pfad.includes('?') ? '&' : '?'}per_page=100&page=${seite}`)
+		const teil = await hole(`${pfad}${pfad.includes('?') ? '&' : '?'}per_page=100&page=${seite}`)
 		alles.push(...teil)
 		if (teil.length < 100) return alles
 	}
@@ -129,7 +154,7 @@ async function main() {
 	}
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
 	main().catch((e) => {
 		process.stderr.write(`FEHLER: ${e.message}\n`)
 		process.exit(1)

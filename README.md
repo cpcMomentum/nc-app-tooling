@@ -583,6 +583,15 @@ Der nächste Lauf liest die jüngste davon und rechnet die Veränderung. Hat das
 ausgerollte Release inzwischen gewechselt, wird nicht verrechnet, sondern der
 alte Wert daneben genannt. Eine eigene Ablage braucht es nicht.
 
+Das Issue ist öffentlich. Als Vormessung zählt deshalb nur ein Kommentar des
+Workflows selbst oder eines Mitglieds der Organisation, und nur in exakt der
+erwarteten Form. Sonst könnte ein Fremder dem nächsten Lauf Zahlen und Text
+unterschieben.
+
+„Jüngstes Release" heißt: zuletzt veröffentlicht. Ein nachgeschobener Patch auf
+einer alten Linie würde deshalb nach 21 Tagen zum Maßstab. Das kam bisher nicht
+vor, steht aber hier, damit ein Einbruch der Zahl richtig gelesen wird.
+
 Der Workflow läuft mit dem `GITHUB_TOKEN` dieses Repos (`issues: write`). Die
 App-Repos sind öffentlich, ihre Release-Zahlen sind ohne weitere Rechte lesbar.
 
