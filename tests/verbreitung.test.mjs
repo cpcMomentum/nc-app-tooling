@@ -30,11 +30,11 @@ test('Gesamtsumme zaehlt nur Tarballs, Entwuerfe und Releases ohne Tarball falle
 test('ausgerollt ist das juengste Release, das mindestens 21 Tage alt ist', () => {
 	const m = auswerten([
 		release('v3', '2026-11-05', 10),
-		release('v2', '2026-10-20', 300),
+		release('v2', '2026-10-19', 300),
 		release('v1', '2026-09-01', 500),
-		release('v2.1-rc', '2026-10-15', 5, { prerelease: true }),
+		release('v2.1-rc', '2026-10-20', 5, { prerelease: true }),
 	], HEUTE)
-	assert.deepEqual(m.ausgerollt, { tag: 'v2', datum: '2026-10-20', downloads: 300 })
+	assert.deepEqual(m.ausgerollt, { tag: 'v2', datum: '2026-10-19', downloads: 300 })
 })
 
 test('20 Tage alt zaehlt noch nicht, ohne altes Release gibt es keine Naeherung', () => {
