@@ -562,6 +562,145 @@ Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
 | 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
 | 1 | Schema-Fehler oder kaputtes JSON |
 
+## `nc-dev-testkonten`
+
+Stellt die **festen Testkonten der lokalen Dev-Instanz** her (`nextcloud-dev`,
+`localhost:8080`). Alle Apps der Flotte testen gegen dieselbe Instanz. Solange
+jede Session nach eigenem Gutdünken Konten anlegte und Passwörter setzte,
+funktionierten Konten plötzlich nicht mehr, auf die sich andere verließen. Am
+02.10.2026 wurde `admin` / `admin` abgewiesen, und niemand konnte sagen, wer
+das Passwort geändert hatte (nc-app-tooling#36).
+
+```bash
+npx nc-dev-testkonten            # fehlende Konten anlegen, alle auf ihr festes Passwort setzen
+npx nc-dev-testkonten --list     # Konten, Passwörter und Zweck zeigen, nichts ändern
+```
+
+Aus dem Flotten-Ordner geht es ohne Installation:
+`node nc-app-tooling/bin/dev-testkonten.mjs`.
+
+**Die Liste steht an genau einer Stelle:** `bin/dev-testkonten.json` (Konto,
+Passwort, Anzeigename, Gruppen, Zweck). Fest gesetzt ist `admin` / `admin`. Die
+Passwörter stehen dort im Klartext, und das ist Absicht: Es sind Wegwerf-Konten
+einer lokalen Instanz, kein Geheimnis. Braucht eine App ein weiteres Konto,
+kommt es per PR in diese Liste, nicht per Hand in die Instanz.
+
+Was das Werkzeug tut und lässt:
+
+- Fehlt ein Konto der Liste, legt es das an. Ist es da, aktiviert es das Konto
+  (falls jemand es gesperrt hat) und setzt das Passwort auf den festen Wert.
+  Ein zweiter Lauf ändert am Zustand nichts mehr.
+- Es ordnet die Gruppen der Liste zu und legt eine fehlende Gruppe an.
+- Konten, die nicht in der Liste stehen, fasst es **nie** an, und es löscht
+  nichts.
+- App-eigene Daten (etwa ein WorkTime-Mitarbeiterprofil) bleiben Sache der App.
+
+Die Regel dazu: **Keine Session legt eigene Konten an oder ändert Passwörter.**
+Klappt ein Login nicht, `nc-dev-testkonten` laufen lassen und es melden.
+
+Der `occ`-Aufruf kommt aus `NC_OCC`, Standard ist
+`docker exec -u www-data -e OC_PASS -i nextcloud-dev php occ`. Das Passwort
+geht über `OC_PASS` in die Umgebung (`--password-from-env`), nicht in die
+Prozessliste. Wer `NC_OCC` selbst setzt und `docker exec` nutzt, braucht
+`-e OC_PASS` darin. `NC_OCC` wird an Leerzeichen getrennt, Pfade mit
+Leerzeichen gehen darin nicht.
+
+Nur für die **lokale** Instanz. Die Konten der e2e-Läufe in GitHub Actions legt
+weiterhin das Provisionierungsskript der jeweiligen App an.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | alle Konten der Liste stehen |
+| 1 | `occ` nicht erreichbar, oder ein Schritt ist gescheitert (die übrigen Konten laufen trotzdem durch) |
+| 2 | unbekanntes Argument |
+## `nc-timezone-check`
+
+Meldet Stellen, an denen aus „jetzt" ein **Kalendertag in UTC** wird.
+
+```bash
+npx nc-timezone-check          # im Wurzelverzeichnis der App
+```
+
+Nextcloud setzt die PHP-Laufzeitzone fest auf UTC, und `toISOString()` im
+Browser liefert ebenfalls UTC. Für einen Zeitstempel (`createdAt`, Audit,
+Token-Ablauf) ist das richtig. Für einen Kalendertag ist es zwischen 00:00 und
+01:00 Uhr (Winterzeit) bzw. 02:00 Uhr (Sommerzeit) noch der **Vortag**.
+
+worktime hatte diese Fehlerklasse dreimal (Feiertage um einen Tag verschoben,
+„heute" in UTC, Stempeluhr bucht zwei Stunden zu früh). Der Audit der Flotte
+(nc-app-tooling#35) fand sie danach in jeder weiteren App, am schwersten in
+rechnungswerk: Rechnungsdatum, Nummernjahr und Fälligkeit kamen beim
+Festschreiben aus UTC. Wer am 1.1. um 00:30 Uhr festschreibt, bekommt das Datum
+31.12. und eine Nummer aus dem Kreis des Vorjahres.
+
+**Die Regel.** Ein Muster kann Zeitstempel und Kalendertag nicht unterscheiden.
+Deshalb muss jede „jetzt"-Stelle eines von dreien sein:
+
+1. **erkennbar ein Zeitstempel:** Der Wert steht im Argument eines bekannten
+   Zeitstempel-Setters (`setCreatedAt(new DateTime())`), von `setDateTime(`
+   einer Benachrichtigung, eines `->set('updated_at', …)` oder eines
+   `'exportedAt' =>`-Schlüssels. Bekannt ist eine feste Liste: Created, Updated,
+   Modified, Deleted, Sent, Seen, Read, Processed, Approved, Submitted, Locked,
+   Cancelled, Archived, Closed, Revoked, Added, Assigned, Done, Frozen,
+   Committed, Exported, Imported, LastUsed, Status. Ein `setPurchasedAt(` oder
+   `setDueAt(` zählt **nicht**: Hinter solchen Namen steckt oft ein Kalendertag
+   (so gefunden in vinarium, wo `purchased_at` das Kaufdatum ist).
+2. **mit Zeitzone gerechnet:** `new DateTime('now', $tz)`. Das ist der Weg für
+   Kalendertage, Muster siehe worktime (`UserTimeZone`, `LocalDate::today()`).
+3. **begründet:** ein Kommentar `tz-ok: <Grund>` in derselben Zeile oder in
+   einer reinen Kommentarzeile direkt davor. Ohne Grund zählt die Marke nicht,
+   in einer Zeichenkette auch nicht, und eine Marke am Zeilenende gilt nur für
+   ihre eigene Zeile.
+
+```php
+// tz-ok: Zeitstempel fuer createdAt und updatedAt
+$now = new DateTime();
+```
+
+Gemeldet wird in `lib/` (ohne `lib/Migration/`):
+
+| Muster | Beispiel |
+|---|---|
+| `new DateTime()` ohne Argument, mit `null` oder `''` | `$now = new DateTime();` |
+| `new DateTime('now'/'today'/'+1 day'/'next month' …)` ohne Zeitzone | `new DateTime('today')` |
+| dasselbe mit fest verdrahtetem UTC | `new DateTime('now', new DateTimeZone('UTC'))` |
+| `date_create()` und `date_create_immutable()` ebenso | `date_create('today')` |
+| `date('…')`, `gmdate('…')`, `idate('…')` ohne Zeitpunkt oder mit `time()` | `(int)date('Y')`, `date('Y-m-d', time())` |
+| `strtotime('today' …)` | |
+| `getDateTime()` und `now()` der `ITimeFactory`, außer es folgt direkt `->setTimezone(` | `$this->time->getDateTime()->format('Y-m-d')` |
+
+Und in `src/` (`.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.vue`, ohne `*.spec.*`,
+`*.test.*` und `*.d.ts`):
+
+| Muster | Beispiel |
+|---|---|
+| `toISOString()` oder `toJSON()` auf Tag, Monat oder Jahr gekürzt | `new Date().toISOString().substring(0, 10)` |
+
+Kommentare sind kein Code, Zeichenketten schon. Eine Anweisung, die sich über
+mehrere Zeilen zieht, wird nur an der ersten Zeile erkannt. Ordner
+`node_modules`, `__tests__` und `__mocks__` werden nicht gelesen.
+
+Nicht gemeldet wird, was ein gegebenes Datum nur umformt:
+`new DateTime($eingabe)`, `date('d.m.Y', $timestamp)`,
+`$entity->getUpdatedAt()->format('Y-m-d')`.
+
+**Grenze des Werkzeugs.** Es findet Stellen, an denen „jetzt" entsteht. Was
+erst über mehrere Zeilen zum Kalendertag wird, sieht es nur am Anfang. Nicht
+erkannt werden fremde Bibliotheken (Carbon, moment), `mktime()` und
+`getdate()`, zusammengesetzte Ausdrücke wie `new DateTime("+$n days")` und der
+Inhalt von Heredocs. Ein `new DateTime(` mit offener Klammer am Zeilenende wird
+immer gemeldet, weil das Argument in der Folgezeile steht.
+
+**Einführen in einer App.** Der erste Lauf meldet je App 8 bis 22 Stellen
+(gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel
+begründen. Erst wenn der Lauf grün ist, kommt er in CI und Pre-Commit. Das
+Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
+Flotte war ein unscheinbares `$now = new DateTime();`.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | keine Befunde |
+| 1 | Befunde, oder kein App-Verzeichnis |
 ## Verbreitung messen (`verbreitung.yml`)
 
 Der Workflow `verbreitung` misst **quartalsweise** (1.1., 1.4., 1.7., 1.10.) die
@@ -661,6 +800,85 @@ dem Job-PHP auch auflöst, muss der Platform-Pin für den Wegwerf-Testlauf weich
   (nur im Arbeitsverzeichnis des Laufs, nichts davon wird committet).
 - **`nc-compat.yml`**, vor dem Kompat-Test: `composer config --unset platform.php`,
   damit der Wächter beim nächsten Major wirklich testet.
+
+## Geteilter Workflow `e2e`
+
+Playwright-Klicktests gegen eine **echte, bedienbare Nextcloud**. Viele Fehler
+zeigen sich nur beim Durchklicken: ein sichtbares, aber verdecktes Schließen-X,
+eine Frist, die sich eintragen lässt und vom Server still verworfen wird.
+Unit-Tests sehen so etwas prinzipbedingt nicht (nc-app-tooling#34).
+
+Der Workflow baut die Instanz und startet die Tests. Die **Specs gehören der
+App**: `playwright.config.ts`, `tests/e2e/*.spec.ts` und `@playwright/test` als
+devDependency. Die App behält außerdem Auslöser und Concurrency:
+
+```yaml
+name: e2e
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    uses: cpcMomentum/nc-app-tooling/.github/workflows/e2e.yml@v1.21.0
+```
+
+Was der Lauf tut, in dieser Reihenfolge:
+
+1. `nextcloud/server` auschecken, Zweig `stable<min-version>` aus `info.xml`
+   (die Untergrenze, dort landet ein Bruch zuerst). Die App-ID kommt ebenfalls
+   aus `info.xml`.
+2. `composer install` in der App, falls sie eine `composer.json` hat.
+   Nextcloud mit SQLite installieren, App aktivieren (fährt die Migrationen),
+   `password_policy` abschalten, Hintergrundjobs auf System-Cron stellen.
+3. Das Provisionierungsskript der App ausführen (Testkonten, Testdaten).
+4. Nextcloud über `php -S` mit vier Arbeitern unter `http://localhost:8080`
+   ausliefern. Ohne Rewrite, die App liegt also unter `/index.php/apps/<id>/`.
+5. `npm ci`, Chromium installieren, `npx playwright test`.
+6. Im Fehlerfall: Playwright-Bericht als Artefakt, dazu `php -S`-Protokoll und
+   `nextcloud.log` im Lauf.
+
+| Eingabe | Standard | |
+|---|---|---|
+| `php-version` | `8.4` | PHP des Servers |
+| `node-version` | `24` | Node für Playwright |
+| `server-branch` | leer | Zweig von `nextcloud/server`, leer = `stable<min-version>` |
+| `provision` | `tests/e2e/provision.sh` | Pfad zum Skript der App für Testkonten (nur der Pfad, keine Argumente), leer = keins |
+| `url-env` | `NC_E2E_URL` | Variable, in der die Tests die Adresse finden |
+| `occ-env` | `NC_OCC` | Variable, in der das Provisionierungsskript den `occ`-Aufruf findet (`php occ`) |
+
+Variablennamen bestehen aus Großbuchstaben, Ziffern und Unterstrich. Reservierte
+Namen wie `PATH` oder `GITHUB_*` lehnt der Lauf ab.
+
+Das Provisionierungsskript läuft im Serververzeichnis und muss ausführbar und
+idempotent sein. Lokal bekommt es über dieselbe Variable den Container-Aufruf
+(`docker exec -u www-data -i nextcloud-dev php occ`), damit es nicht zwei
+Skripte gibt, die auseinanderlaufen.
+
+**Zwei feste Regeln, die der Workflow durchsetzt:**
+
+- **`npm ci`, nie `rm -f package-lock.json && npm install`.** Der alte Weg löste
+  die Abhängigkeiten bei jedem Lauf live gegen die Registry auf. Am 28.09.2026
+  ergab das drei rote Läufe, weil eine frisch veröffentlichte Version noch nicht
+  verteilt war. Das Lockfile pinnte eine ältere, mit `npm ci` wäre der Lauf grün
+  gewesen. In keinem Workflow wird die Lock-Datei gelöscht.
+- **Kein `npm run build`.** Getestet wird das eingecheckte Bundle in `js/` und
+  `css/`, denn das wird ausgeliefert. Ein Neubau im Lauf würde einen vergessenen
+  Build verdecken.
+
+Der Job heißt `E2E (Chromium)`. Als Statuscheck erscheint er in der App als
+`<Job des Aufrufers> / E2E (Chromium)`, im Beispiel also `e2e / E2E (Chromium)`.
+Wer ihn in ein Ruleset aufnimmt, muss genau diesen Namen eintragen.
 
 ## Abgelöst: `nc-bundle-check`
 
