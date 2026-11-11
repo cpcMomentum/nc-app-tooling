@@ -7,10 +7,10 @@
  * beim Einfuegen ein und desselben Blocks von Hand. Die App-Hooks sind jetzt
  * ein Aufruf, die Logik steht hier (contractmanager#339).
  *
- * Sechs Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
+ * Sieben Pruefungen, alle gegen den GESTAGTEN Stand (`git show :datei`), nicht
  * gegen den Arbeitsbaum — sonst prueft der Hook etwas anderes als das, was
- * committet wird. Ausnahmen sind die drei, die ein Werkzeug aufrufen: l10n,
- * Schema und Notification lesen den Arbeitsbaum, siehe dort.
+ * committet wird. Ausnahmen sind die vier, die ein Werkzeug aufrufen: l10n,
+ * Schema, Notification und Zeitzone lesen den Arbeitsbaum, siehe dort.
  *
  *   1. Merge-Konfliktmarker
  *   2. Zugangsschluessel (Secrets)
@@ -18,16 +18,17 @@
  *   4. OCP-only (keine internen OC_-Klassen, kein \OC\-Namensraum)
  *   5. Schema-Portabilitaet der Migrationen
  *   6. Setter-Vertraege der Notifier
+ *   7. Kalendertage aus UTC (nur in Apps mit dem Skript timezone:check)
  *
  * Reihenfolge ist bewusst: Die Secret-Pruefung stand frueher NACH einer
  * Pruefung, die bei "keine PHP-Dateien gestaged" mit exit 0 ausstieg — der
- * belegte Leak kam ueber eine .md-Datei. Hier laufen alle sechs immer.
+ * belegte Leak kam ueber eine .md-Datei. Hier laufen 1 bis 6 immer.
  *
  * Umgehung nur mit `git commit --no-verify`, und das ist keine Loesung.
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
@@ -223,6 +224,37 @@ if (!dateien.length) process.exit(0)
 				console.log(red('\n[Notification Check] BLOCKED') + '\n')
 				console.log('Der Notifier uebergibt einem NC-Setter einen Wert, den dieser')
 				console.log('ablehnt — die Benachrichtigung kommt unvollstaendig an.\n')
+				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
+				process.exit(1)
+			}
+		}
+	}
+}
+
+// --- 7. Kalendertage aus UTC ------------------------------------------------
+// Nur in Apps, die den Check eingefuehrt haben (Skript timezone:check): der
+// erste Lauf meldet Bestand, der erst einmal durchgesehen sein muss. Liest wie
+// die l10n-Pruefung den ARBEITSBAUM.
+{
+	const RELEVANT = /^(lib\/.*\.php|src\/.*\.([cm]?[jt]sx?|vue))$/
+	// Ein unlesbares package.json ist nicht Sache dieses Schritts: dann bleibt er aus.
+	const hatSkript = () => {
+		try {
+			return Boolean(JSON.parse(readFileSync('package.json', 'utf8'))?.scripts?.['timezone:check'])
+		} catch {
+			return false
+		}
+	}
+	if (dateien.some((f) => RELEVANT.test(f)) && hatSkript()) {
+		const bin = join('node_modules', '.bin', 'nc-timezone-check')
+		if (!existsSync(bin)) {
+			console.log(yellow('[Timezone Check] uebersprungen — nc-timezone-check fehlt.'))
+			console.log('Einmalig  npm install  ausfuehren; im CI laeuft die Pruefung ohnehin.')
+		} else {
+			try {
+				execFileSync(bin, [], { stdio: 'inherit' })
+			} catch {
+				console.log(red('\n[Timezone Check] BLOCKED') + '\n')
 				console.log('Umgehung (nicht empfohlen): git commit --no-verify')
 				process.exit(1)
 			}

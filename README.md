@@ -693,8 +693,24 @@ immer gemeldet, weil das Argument in der Folgezeile steht.
 
 **Einführen in einer App.** Der erste Lauf meldet je App 8 bis 22 Stellen
 (gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel
-begründen. Erst wenn der Lauf grün ist, kommt er in CI und Pre-Commit. Das
-Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
+begründen. Ist der Lauf grün, schaltet **ein Eintrag** beides ein:
+
+```jsonc
+// package.json der App
+"scripts": {
+    "timezone:check": "nc-timezone-check"
+}
+```
+
+- **Pre-Commit:** `nc-pre-commit` ruft den Check auf, sobald dieses Skript
+  existiert und der Commit PHP-Dateien unter `lib/` oder Code-Dateien unter
+  `src/` anfasst. Ohne
+  das Skript bleibt der Schritt aus, ein Tooling-Sprung blockiert also keine
+  App, die ihren Bestand noch nicht durchgesehen hat.
+- **CI:** `npm run timezone:check` als Schritt in den Workflow der App, der
+  schon `npm run l10n:check` fährt.
+
+Das Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
 Flotte war ein unscheinbares `$now = new DateTime();`.
 
 | Exit | Bedeutung |
@@ -723,8 +739,10 @@ ausgerollte Release inzwischen gewechselt, wird nicht verrechnet, sondern der
 alte Wert daneben genannt. Eine eigene Ablage braucht es nicht.
 
 Das Issue ist öffentlich. Als Vormessung zählt deshalb nur ein Kommentar des
-Workflows selbst oder eines Mitglieds der Organisation, und nur in exakt der
-erwarteten Form. Sonst könnte ein Fremder dem nächsten Lauf Zahlen und Text
+Workflows selbst, und nur in exakt der erwarteten Form. Ein Kommentar eines
+Mitglieds der Organisation zählt nur bei einem Lauf mit persönlichem Token: Dem
+Token des Workflows zeigt GitHub die Mitgliedschaft nicht, eine von Hand
+gepostete Messung übergeht er. Sonst könnte ein Fremder dem nächsten Lauf Zahlen und Text
 unterschieben.
 
 „Jüngstes Release" heißt: zuletzt veröffentlicht. Ein nachgeschobener Patch auf
