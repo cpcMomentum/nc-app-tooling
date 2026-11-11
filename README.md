@@ -619,7 +619,7 @@ Nicht gemeldet wird, was ein gegebenes Datum nur umformt:
 `new DateTime($eingabe)`, `date('d.m.Y', $timestamp)`,
 `$entity->getUpdatedAt()->format('Y-m-d')`.
 
-**Einführen in einer App.** Der erste Lauf meldet je App 5 bis 25 Stellen
+**Einführen in einer App.** Der erste Lauf meldet je App 8 bis 22 Stellen
 (gemessen am 11.11.2026). Jede einmal ansehen: Kalendertag beheben, Zeitstempel
 begründen. Erst wenn der Lauf grün ist, kommt er in CI und Pre-Commit. Das
 Werkzeug ist mit Absicht streng statt schlau: Die schwerste Fundstelle der
