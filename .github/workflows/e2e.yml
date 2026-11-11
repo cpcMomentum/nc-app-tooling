@@ -58,18 +58,21 @@ jobs:
             echo "::error::Konnte die App-ID nicht aus info.xml lesen"; exit 1
           fi
           for name in "$URL_ENV" "$OCC_ENV"; do
-            if ! printf '%s' "$name" | grep -qE '^[A-Z_][A-Z0-9_]*$'; then
-              echo "::error::Ungueltiger Variablenname: $name"; exit 1
+            if ! [[ "$name" =~ ^[A-Z_][A-Z0-9_]*$ ]] || [[ "$name" =~ ^(PATH|HOME|CI|NODE_OPTIONS|BASH_ENV)$|^(GITHUB|RUNNER|LD)_ ]]; then
+              echo "::error::Ungueltiger oder reservierter Variablenname: $name"; exit 1
             fi
           done
           branch="$SERVER_BRANCH"
           if [ -z "$branch" ]; then
-            min=$(grep -oE '<nextcloud[^>]*/>' appinfo/info.xml | grep -oE 'min-version="[0-9]+"' | grep -oE '[0-9]+')
+            min=$(grep -oE '<nextcloud[^>]*/>' appinfo/info.xml | grep -oE 'min-version="[0-9]+"' | grep -oE '[0-9]+' || true)
             if [ -z "$min" ]; then
               echo "::error::Konnte min-version nicht aus info.xml lesen"; exit 1
             fi
             # Die Untergrenze: dort landet ein Bruch zuerst.
             branch="stable$min"
+          fi
+          if ! [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::Ungueltiger Serverzweig: $branch"; exit 1
           fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
@@ -179,7 +182,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-bericht
+          name: playwright-bericht-${{ steps.derive.outputs.branch }}
           path: |
             server/apps/${{ steps.derive.outputs.app }}/playwright-report/
             server/apps/${{ steps.derive.outputs.app }}/test-results/

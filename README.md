@@ -666,7 +666,8 @@ Was der Lauf tut, in dieser Reihenfolge:
 1. `nextcloud/server` auschecken, Zweig `stable<min-version>` aus `info.xml`
    (die Untergrenze, dort landet ein Bruch zuerst). Die App-ID kommt ebenfalls
    aus `info.xml`.
-2. Nextcloud mit SQLite installieren, App aktivieren (fährt die Migrationen),
+2. `composer install` in der App, falls sie eine `composer.json` hat.
+   Nextcloud mit SQLite installieren, App aktivieren (fährt die Migrationen),
    `password_policy` abschalten, Hintergrundjobs auf System-Cron stellen.
 3. Das Provisionierungsskript der App ausführen (Testkonten, Testdaten).
 4. Nextcloud über `php -S` mit vier Arbeitern unter `http://localhost:8080`
@@ -680,9 +681,12 @@ Was der Lauf tut, in dieser Reihenfolge:
 | `php-version` | `8.4` | PHP des Servers |
 | `node-version` | `24` | Node für Playwright |
 | `server-branch` | leer | Zweig von `nextcloud/server`, leer = `stable<min-version>` |
-| `provision` | `tests/e2e/provision.sh` | Skript der App für Testkonten, leer = keins |
+| `provision` | `tests/e2e/provision.sh` | Pfad zum Skript der App für Testkonten (nur der Pfad, keine Argumente), leer = keins |
 | `url-env` | `NC_E2E_URL` | Variable, in der die Tests die Adresse finden |
 | `occ-env` | `NC_OCC` | Variable, in der das Provisionierungsskript den `occ`-Aufruf findet (`php occ`) |
+
+Variablennamen bestehen aus Großbuchstaben, Ziffern und Unterstrich. Reservierte
+Namen wie `PATH` oder `GITHUB_*` lehnt der Lauf ab.
 
 Das Provisionierungsskript läuft im Serververzeichnis und muss ausführbar und
 idempotent sein. Lokal bekommt es über dieselbe Variable den Container-Aufruf
