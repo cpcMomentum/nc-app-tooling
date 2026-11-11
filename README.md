@@ -562,6 +562,56 @@ Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
 | 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
 | 1 | Schema-Fehler oder kaputtes JSON |
 
+## `nc-dev-testkonten`
+
+Stellt die **festen Testkonten der lokalen Dev-Instanz** her (`nextcloud-dev`,
+`localhost:8080`). Alle Apps der Flotte testen gegen dieselbe Instanz. Solange
+jede Session nach eigenem Gutdünken Konten anlegte und Passwörter setzte,
+funktionierten Konten plötzlich nicht mehr, auf die sich andere verließen. Am
+02.10.2026 wurde `admin` / `admin` abgewiesen, und niemand konnte sagen, wer
+das Passwort geändert hatte (nc-app-tooling#36).
+
+```bash
+npx nc-dev-testkonten            # fehlende Konten anlegen, alle auf ihr festes Passwort setzen
+npx nc-dev-testkonten --list     # Konten, Passwörter und Zweck zeigen, nichts ändern
+```
+
+Aus dem Flotten-Ordner geht es ohne Installation:
+`node nc-app-tooling/bin/dev-testkonten.mjs`.
+
+**Die Liste steht an genau einer Stelle:** `bin/dev-testkonten.json` (Konto,
+Passwort, Anzeigename, Gruppen, Zweck). Fest gesetzt ist `admin` / `admin`. Die
+Passwörter stehen dort im Klartext, und das ist Absicht: Es sind Wegwerf-Konten
+einer lokalen Instanz, kein Geheimnis. Braucht eine App ein weiteres Konto,
+kommt es per PR in diese Liste, nicht per Hand in die Instanz.
+
+Was das Werkzeug tut und lässt:
+
+- Fehlt ein Konto der Liste, legt es das an. Ist es da, setzt es das Passwort
+  auf den festen Wert. Ein zweiter Lauf ändert nichts mehr.
+- Es ordnet die Gruppen der Liste zu.
+- Konten, die nicht in der Liste stehen, fasst es **nie** an, und es löscht
+  nichts.
+- App-eigene Daten (etwa ein WorkTime-Mitarbeiterprofil) bleiben Sache der App.
+
+Die Regel dazu: **Keine Session legt eigene Konten an oder ändert Passwörter.**
+Klappt ein Login nicht, `nc-dev-testkonten` laufen lassen und es melden.
+
+Der `occ`-Aufruf kommt aus `NC_OCC`, Standard ist
+`docker exec -u www-data -e OC_PASS -i nextcloud-dev php occ`. Das Passwort
+geht über `OC_PASS` in die Umgebung (`--password-from-env`), nicht in die
+Prozessliste. Wer `NC_OCC` selbst setzt und `docker exec` nutzt, braucht
+`-e OC_PASS` darin.
+
+Nur für die **lokale** Instanz. Die Konten der e2e-Läufe in GitHub Actions legt
+weiterhin das Provisionierungsskript der jeweiligen App an.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | alle Konten der Liste stehen |
+| 1 | `occ` nicht erreichbar, oder ein Schritt ist gescheitert (die übrigen Konten laufen trotzdem durch) |
+| 2 | unbekanntes Argument |
+
 ## Composite Action `ocp-versionen`
 
 Leitet die zu testenden `nextcloud/ocp`-Versionen aus `appinfo/info.xml` ab und
