@@ -562,6 +562,30 @@ Schlüssel **neuer** als das Release → Fehler (er könnte nie erscheinen).
 | 0 | gültig — oder keine `whatsnew/whatsnew.json` (nichts zu prüfen) |
 | 1 | Schema-Fehler oder kaputtes JSON |
 
+## Verbreitung messen (`verbreitung.yml`)
+
+Der Workflow `verbreitung` misst **quartalsweise** (1.1., 1.4., 1.7., 1.10.) die
+Download-Zähler der Release-Tarballs aller Flotten-Apps und schreibt das
+Ergebnis als Kommentar in nc-app-tooling#19. Von Hand: `gh workflow run
+verbreitung.yml`, oder lokal ohne Posten `node .github/scripts/verbreitung.mjs`.
+
+Der App Store nennt keine Installationszahlen. Die Store-Einträge verlinken aber
+die Tarballs auf GitHub, und GitHub zählt jeden Abruf. Zwei Zahlen je App:
+
+- **Downloads gesamt:** Installationen, Updates und Abrufe des Stores zusammen.
+  Das ist **nicht** die Zahl der Instanzen.
+- **Downloads des ausgerollten Release:** das jüngste Release, das mindestens
+  21 Tage alt ist. Bis dahin haben die meisten Instanzen aktualisiert, die Zahl
+  ist die Näherung für aktive Instanzen.
+
+Jeder Kommentar trägt seine Messung maschinenlesbar in einem HTML-Kommentar.
+Der nächste Lauf liest die jüngste davon und rechnet die Veränderung. Hat das
+ausgerollte Release inzwischen gewechselt, wird nicht verrechnet, sondern der
+alte Wert daneben genannt. Eine eigene Ablage braucht es nicht.
+
+Der Workflow läuft mit dem `GITHUB_TOKEN` dieses Repos (`issues: write`). Die
+App-Repos sind öffentlich, ihre Release-Zahlen sind ohne weitere Rechte lesbar.
+
 ## Composite Action `ocp-versionen`
 
 Leitet die zu testenden `nextcloud/ocp`-Versionen aus `appinfo/info.xml` ab und
