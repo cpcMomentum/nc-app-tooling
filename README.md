@@ -724,6 +724,49 @@ Flotte war ein unscheinbares `$now = new DateTime();`.
 |---|---|
 | 0 | keine Befunde |
 | 1 | Befunde, oder kein App-Verzeichnis |
+## `nc-design-check`
+
+Prüft den Teil von [`docs/design-system.md`](docs/design-system.md), der sich
+sicher am Code ablesen lässt. Das Dokument liegt im Paket und damit in der
+Version des Tooling unter `node_modules/nc-app-tooling/docs/design-system.md`.
+
+```bash
+npx nc-design-check          # im Wurzelverzeichnis der App
+```
+
+```jsonc
+// package.json der App
+"scripts": {
+    "design:check": "nc-design-check"
+}
+```
+
+Geprüft wird (alles Fehler, `<app>` = Id aus `appinfo/info.xml`):
+
+1. `src/App.vue` hat einen `NcAppNavigationItem` mit `:name="t('<app>', 'Neuerungen')"`.
+2. Kein `NcAppNavigationItem` heißt „Meine Einstellungen“, „Mein Kontakt“,
+   „Administration“ oder „Admin“. Die Meldung nennt den Ersatz: „Einstellungen“
+   (persönlich) bzw. „Verwaltung“ (app-weit).
+3. `img/app.svg` hat `fill="#fff"` am Wurzel-`svg`, `img/app-dark.svg` hat dort
+   kein `fill`. Fehlt eine der Dateien, ist das ebenfalls ein Fehler.
+4. Abgelöste Formulierungen in `t('<app>', '…')`-Texten unter `src/`:
+   „installierten Werk-Apps“ (richtig: „aktivierten“). Die Liste ist die
+   Konstante `ABGELOESTE_TEXTE` in `bin/design-check.mjs`.
+
+**Bewusst nicht geprüft:** Layout und CSS-Werte (Breiten, Abstände, Raster),
+Symbole in der Einstellungs-Navigation, Kartenoptik. Das lässt sich nicht ohne
+Fehlalarme aus dem Code lesen und wird im Review gegen `docs/design-system.md`
+beurteilt.
+
+Freiwillig je App, **nicht** im `nc-pre-commit`: Jede App meldet ihre
+Abweichungen (Bestandsaufnahme am Ende des Design-Dokuments), bis sie sie
+behoben hat.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | keine Fehler |
+| 1 | mindestens ein Fehler, oder kein App-Verzeichnis |
+
 ## Verbreitung messen (`verbreitung.yml`)
 
 Der Workflow `verbreitung` misst **quartalsweise** (1.1., 1.4., 1.7., 1.10.) die
