@@ -17,6 +17,13 @@ Prüfer hatten null Lücken, Apps ohne hatten 21 bis 37.
 Eine Regel lässt sich als Text teilen. Ein Werkzeug nicht. Dafür ist dieses Repo
 da: eine Fassung, versioniert, von allen Apps als Abhängigkeit gezogen.
 
+## Design-System
+
+Wie die Apps aussehen, wo Werkzeuge nicht reichen: Einstellungsseite,
+Navigationsfuß, WerkPlus-Abschnitt, Neuerungen, Sprache.
+[`docs/design-system.md`](docs/design-system.md). Neue Oberflächen werden gegen
+dieses Dokument gebaut und geprüft.
+
 ## Einbinden
 
 ```bash
