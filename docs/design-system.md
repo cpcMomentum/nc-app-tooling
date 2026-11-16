@@ -10,7 +10,7 @@ Drei Apps hatten im November 2026 dieselbe Einstellungsseite: Gruppen mit
 Überschrift, Symbole, 240 px Seitenleiste, 1100 px Breite. Das Muster stammt aus
 einem WorkTime-Entwurf vom Juni 2026 (`worktime/docs/20260601_mockup-settings-navigation.html`).
 Es stand nirgends als Regel. ProjektWerk hat seine Seite deshalb anders gebaut
-(„Verwaltung“, flache Liste ohne Symbole), RechnungsWerk hat sie von ProjektWerk
+(flache Liste ohne Symbole), RechnungsWerk hat sie von ProjektWerk
 kopiert und wieder um Gruppen und Symbole ergänzt. Auch das „Was ist neu?“-Fenster
 liegt in fünf eigenen Fassungen vor.
 
@@ -54,25 +54,31 @@ Hauptpunkte sind je App verschieden. **Der Fuß der Navigation** (`#footer` von
 |---|---|---|---|
 | App-eigene Punkte (etwa „Protokoll“) | je App | je App | – |
 | Neuerungen | `BullhornOutlineIcon` | alle außer Gäste | Muss |
-| Meine Einstellungen | `AccountCogIcon` | alle, wenn es persönliche Einstellungen gibt | Muss |
-| Einstellungen | `CogIcon` | wer verwalten darf (Admin oder App-Rolle) | Muss |
+| Einstellungen | `CogIcon` | alle, wenn es persönliche Einstellungen gibt | Muss |
+| Verwaltung | `ShieldAccountIcon` | wer verwalten darf (Nextcloud-Admin oder App-Rolle) | Muss |
 
-- Kein Punkt heißt „Verwaltung“, „Administration“ oder „Admin“. Die Seite für
-  die App-weite Konfiguration heißt **Einstellungen**.
-- Persönliche Einstellungen (gelten nur für den angemeldeten Nutzer) stehen auf
-  **Meine Einstellungen**, nicht als Gruppe innerhalb von „Einstellungen“.
-  Was bisher „Mein Kontakt“ o. ä. heißt, gehört dorthin.
+- Es gibt zwei Seiten mit festen Namen:
+  - **Einstellungen**: persönlich, gilt nur für den angemeldeten Nutzer
+    (eigene Benachrichtigungen, eigener Kontakt, Ansicht). Was bisher
+    „Meine Einstellungen“ oder „Mein Kontakt“ heißt, heißt künftig so.
+  - **Verwaltung**: app-weit, für alle Nutzer der App wirksam (Firma,
+    Nummernkreise, Mitarbeiter, WerkPlus).
+- Nicht „Admin“ oder „Administration“: In WorkTime verwalten auch App-Rollen,
+  die keine Nextcloud-Admins sind. „Verwaltung“ entspricht Nextclouds eigenem
+  Begriff „Verwaltungseinstellungen“.
+- Persönliches steht nie als Gruppe in der Verwaltung, App-weites nie in den
+  Einstellungen.
 - Ein Punkt, der für den Nutzer ins Leere liefe, wird ausgeblendet. Die Sperre
   selbst sitzt serverseitig.
 
 ## 3. Einstellungsseite
 
-Gilt für **Einstellungen** und **Meine Einstellungen** gleichermaßen.
+Gilt für **Einstellungen** und **Verwaltung** gleichermaßen. Beispiele unten zeigen die Verwaltung.
 
 ### Aufbau
 
 ```
-Einstellungen                                         ← h2
+Verwaltung                                            ← h2
 ┌──────────────────┬─────────────────────────────────┐
 │ GRUPPE           │ ┌─────────────────────────────┐ │
 │  ⚙ Punkt         │ │ ABSCHNITTSTITEL             │ │
@@ -180,7 +186,7 @@ abweicht, ist unten markiert. Vertrag und Verhalten: `werkplus-backend/docs/cont
 
 ### Ort
 
-Letzte Gruppe **„Lizenz“** auf der Seite **Einstellungen**, Punkt **„WerkPlus“**,
+Letzte Gruppe **„Lizenz“** auf der Seite **Verwaltung**, Punkt **„WerkPlus“**,
 Symbol `KeyOutlineIcon`. **Muss.**
 
 ### Reihenfolge im Abschnitt (Muss)
@@ -245,7 +251,7 @@ hat inzwischen erfolgreich geprüft), wird der Fehler nicht mehr angezeigt.
 ## 7. Sprache
 
 - Quellsprache Deutsch mit „du“, `de_DE` mit „Sie“ (Regeln: `nc-l10n-check`, README).
-- Begriffe einheitlich: **Einstellungen**, **Meine Einstellungen**, **Neuerungen**,
+- Begriffe einheitlich: **Einstellungen** (persönlich), **Verwaltung** (app-weit), **Neuerungen**,
   **Speichern**, **Entfernen** (Schlüssel, Zuordnung), **Löschen** (Daten weg).
 - Knöpfe nennen das Verb, nicht „OK“ oder „Ja“.
 - Keine Ausrufezeichen in Hinweisen.
@@ -256,10 +262,10 @@ hat inzwischen erfolgreich geprüft), wird der Fehler nicht mehr angezeigt.
 
 | App | Abweichung |
 |---|---|
-| ProjektWerk | Seite heißt „Verwaltung“; Navigation flach, ohne Symbole; keine Karten; keine Breitenbegrenzung; `dt`/`dd` nicht zurückgesetzt (Überlappung); Zwischenüberschrift im WerkPlus-Abschnitt in Großbuchstaben; alte Fehlermeldung bleibt stehen |
-| RechnungsWerk | Kein Punkt „Neuerungen“; „Mein Kontakt“ statt „Meine Einstellungen“; „installierten“ statt „aktivierten“ |
-| WorkTime | Abschnitte als `NcSettingsSection` statt Karte; WerkPlus-Abschnitt fehlt (worktime#871); Vue 2 |
-| VertragsWerk | Persönliche Einstellungen als Gruppe in „Einstellungen“ statt eigener Seite; Reihenfolge im Fuß; WerkPlus-Abschnitt fehlt (contractmanager#523) |
+| ProjektWerk | „Meine Einstellungen“ statt „Einstellungen“; Navigation flach, ohne Symbole; keine Karten; keine Breitenbegrenzung; `dt`/`dd` nicht zurückgesetzt (Überlappung); Zwischenüberschrift im WerkPlus-Abschnitt in Großbuchstaben; alte Fehlermeldung bleibt stehen |
+| RechnungsWerk | Kein Punkt „Neuerungen“; app-weite Seite heißt „Einstellungen“ statt „Verwaltung“; „Mein Kontakt“ statt „Einstellungen“; „installierten“ statt „aktivierten“ |
+| WorkTime | app-weite Seite heißt „Einstellungen“ statt „Verwaltung“, persönliche „Meine Einstellungen“ statt „Einstellungen“; Abschnitte als `NcSettingsSection` statt Karte; WerkPlus-Abschnitt fehlt (worktime#871); Vue 2 |
+| VertragsWerk | Persönliches und App-weites auf einer Seite „Einstellungen“ statt zwei Seiten; Reihenfolge im Fuß; WerkPlus-Abschnitt fehlt (contractmanager#523) |
 | Vinarium | Keine Einstellungsseite (nur nötig, wenn es etwas einzustellen gibt) |
 
 Die Liste ist eine Bestandsaufnahme, keine Vollständigkeitsprüfung.
@@ -267,7 +273,7 @@ Die Liste ist eine Bestandsaufnahme, keine Vollständigkeitsprüfung.
 ## Durchsetzung
 
 Geplant: `nc-design-check` in diesem Repo prüft, was sich am Code prüfen lässt
-(Titel „Einstellungen“, Symbol an jedem Navigationspunkt, Punkt „Neuerungen“,
+(Seitennamen „Einstellungen“/„Verwaltung“, Symbol an jedem Navigationspunkt, Punkt „Neuerungen“,
 `padding-left: 50px`). Bis dahin prüfen Design-Review und Code-Review gegen
 dieses Dokument.
 
