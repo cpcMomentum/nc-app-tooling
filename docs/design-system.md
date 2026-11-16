@@ -272,10 +272,13 @@ Die Liste ist eine Bestandsaufnahme, keine Vollständigkeitsprüfung.
 
 ## Durchsetzung
 
-Geplant: `nc-design-check` in diesem Repo prüft, was sich am Code prüfen lässt
-(Seitennamen „Einstellungen“/„Verwaltung“, Symbol an jedem Navigationspunkt, Punkt „Neuerungen“,
-`padding-left: 50px`). Bis dahin prüfen Design-Review und Code-Review gegen
-dieses Dokument.
+`nc-design-check` (in diesem Repo, README) prüft, was sich sicher am Code ablesen
+lässt: Punkt „Neuerungen“ in `src/App.vue`, keine abgelösten Seitennamen („Meine
+Einstellungen“, „Mein Kontakt“, „Administration“, „Admin“), `fill` an
+`img/app.svg` und `img/app-dark.svg`, abgelöste Formulierungen („installierten
+Werk-Apps“). Freiwillig je App über `"design:check": "nc-design-check"`.
+Layout, CSS-Werte, Symbole der Einstellungs-Navigation und Kartenoptik prüfen
+Design-Review und Code-Review gegen dieses Dokument.
 
 Gemeinsame Vue-Bausteine (WerkPlus-Abschnitt, „Was ist neu?“-Fenster,
 Einstellungsgerüst) erst, wenn alle Apps auf Vue 3 sind. WorkTime läuft noch
