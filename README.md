@@ -979,6 +979,17 @@ Kein eigenes Werkzeug nötig — gebaut wurde ohnehin schon. Für den Release, w
 gegen HEAD statt gegen den Arbeitsbaum verglichen werden muss, gibt es
 `nc-bundle-fresh`.
 
+## App-Sperre im `nc-pre-commit`
+
+Die Apps liegen in einem per Nextcloud synchronisierten Ordner, in dem zwei Macs arbeiten. Committen beide
+gleichzeitig ins selbe Repo, kann `.git` beschädigt werden. Die Sperre pro App liegt deshalb im Parent-Ordner
+(`../.claude/hooks/app-lock.mjs`, Regeln dort in `docs/20261123_zusammenarbeit-axel-sven-plan.md`).
+
+`nc-pre-commit` ruft als Schritt 0 `node ../.claude/hooks/app-lock.mjs --check <repo>` auf, **sofern die Datei
+existiert**. Exit 1 blockiert den Commit mit dem Grund (wer die App gerade bearbeitet). In CI und in einem eigenen
+Klon fehlt die Datei, dann entfällt der Schritt. Claude-Sitzungen sperrt zusätzlich ein PreToolUse-Hook schon vor
+dem ersten Schreibschritt; der Git-Hook fängt Commits ohne Claude ab (Terminal, IDE).
+
 ## Tests
 
 ```bash
