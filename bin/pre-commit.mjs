@@ -12,6 +12,7 @@
  * committet wird. Ausnahmen sind die vier, die ein Werkzeug aufrufen: l10n,
  * Schema, Notification und Zeitzone lesen den Arbeitsbaum, siehe dort.
  *
+ *   0. App-Sperre im gemeinsamen Nextcloud-Ordner (nur wenn es sie gibt)
  *   1. Merge-Konfliktmarker
  *   2. Zugangsschluessel (Secrets)
  *   3. l10n-Katalog-Konsistenz
@@ -27,9 +28,9 @@
  * Umgehung nur mit `git commit --no-verify`, und das ist keine Loesung.
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
@@ -74,6 +75,24 @@ function block(titel, text, funde) {
 
 const dateien = stagedFiles()
 if (!dateien.length) process.exit(0)
+
+// --- 0. App-Sperre ----------------------------------------------------------
+// Im per Nextcloud geteilten Ordner arbeiten zwei Macs; zwei gleichzeitige
+// Commits in einem Repo beschaedigen .git. Die Sperre liegt im Parent-Ordner
+// (.claude/hooks/app-lock.mjs); ausserhalb davon (CI, eigener Klon) entfaellt der Schritt.
+{
+	const wurzel = git('rev-parse', '--show-toplevel').trim()
+	const sperre = wurzel && join(dirname(wurzel), '.claude', 'hooks', 'app-lock.mjs')
+	if (sperre && existsSync(sperre)) {
+		const ergebnis = spawnSync('node', [sperre, '--check', wurzel], { encoding: 'utf8' })
+		if (ergebnis.status === 1) {
+			console.log(red('[App-Sperre] BLOCKED') + '\n')
+			console.log((ergebnis.stderr || '').trim())
+			console.log('\nUmgehung (nicht empfohlen): git commit --no-verify')
+			process.exit(1)
+		}
+	}
+}
 
 // --- 1. Merge-Konfliktmarker ------------------------------------------------
 // Anlass: Konfliktmarker in JS brachen das worktime-Release v0.6.2.
