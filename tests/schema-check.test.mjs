@@ -589,3 +589,105 @@ ${texte.map((n) => `		$table->addColumn('${n}', Types::TEXT, ['notnull' => true]
 	assert.equal(pruefe(schemaApp({ datenbanken: OHNE_ORACLE, migrationen: { V1: rumpf(['a']) } })).code, 0)
 	assert.equal(pruefe(schemaApp({ datenbanken: OHNE_ORACLE, migrationen: { V1: rumpf(['a', 'b']) } })).code, 1)
 })
+
+const zeile = (migrationen, datenbanken = OHNE_ORACLE) => pruefe(schemaApp({ datenbanken, migrationen }))
+const basis = `		$table = $schema->createTable('t');
+		$table->addColumn('a', Types::STRING, ['notnull' => true, 'length' => 16000]);
+		$table->addColumn('b', Types::STRING, ['notnull' => true, 'length' => 10]);`
+
+test('Zeilengroesse: verkettetes getTable()->getColumn()->setLength() zaehlt', () => {
+	// Nur die Kette selbst reisst die Grenze: b waechst von 41 auf 4.002 Byte.
+	assert.equal(zeile({ V1: basis, V2: "		$schema->getTable('t')->getColumn('b')->setLength(1000);" }).code, 1)
+	assert.equal(zeile({ V1: basis, V2: "		$schema->getTable('t')->getColumn('b')->setLength(100);" }).code, 0)
+})
+
+test('Zeilengroesse: voll qualifiziertes Types::TEXT in setType und changeColumn wird erkannt', () => {
+	const danach = "		$table->addColumn('c', Types::STRING, ['notnull' => true, 'length' => 1000]);"
+	const perSetType = `		$table = $schema->getTable('t');
+		$column = $table->getColumn('a');
+		$column->setType(Type::getType(\\OCP\\DB\\Types::TEXT));
+		$column->setLength(null);
+${danach}`
+	const perChange = `		$table = $schema->getTable('t');
+		$table->changeColumn('a', ['type' => Type::getType(\\Doctrine\\DBAL\\Types\\Types::TEXT), 'length' => null]);
+${danach}`
+	for (const V2 of [perSetType, perChange]) {
+		const { code, ausgabe } = zeile({ V1: basis, V2 })
+		assert.equal(code, 0, ausgabe)
+		assert.doesNotMatch(ausgabe, /teilweise geprueft/)
+	}
+})
+
+test('Zeilengroesse: nicht lesbares setType nimmt die Spalte aus der Summe und nennt sie', () => {
+	const { code, ausgabe } = zeile({ V1: basis, V2: `		$table = $schema->getTable('t');
+		$table->getColumn('a')->setType($neuerTyp);
+		$table->addColumn('c', Types::STRING, ['notnull' => true, 'length' => 1000]);` })
+	assert.equal(code, 0, ausgabe)
+	assert.match(ausgabe, /setType\(\$neuerTyp\)/)
+})
+
+test('Zeilengroesse: changeColumn mit length wird nachgezogen', () => {
+	const V2 = (n) => `		$table = $schema->getTable('t');
+		$table->changeColumn('b', ['length' => ${n}]);`
+	assert.equal(zeile({ V1: basis, V2: V2(1000) }).code, 1)
+	assert.equal(zeile({ V1: basis, V2: V2(100) }).code, 0)
+})
+
+test('Zeilengroesse: verkettetes getTable()->dropColumn() gibt Platz frei', () => {
+	const V1 = basis.replace("'length' => 10]", "'length' => 1000]")
+	assert.equal(zeile({ V1 }).code, 1)
+	// V1 allein ist schon rot; V2 auf eine zweite Tabelle, die erst nach dem Drop passt.
+	const zwei = `		$table = $schema->createTable('u');
+		$table->addColumn('a', Types::STRING, ['notnull' => true, 'length' => 16000]);`
+	const V2 = `		$schema->getTable('u')->dropColumn('a');
+		$schema->getTable('u')->addColumn('b', Types::STRING, ['notnull' => true, 'length' => 16000]);`
+	assert.equal(zeile({ V1: zwei, V2 }).code, 0)
+})
+
+test('Zeilengroesse: setNotnull(false) kostet das Null-Bitmap', () => {
+	const V1 = `		$table = $schema->createTable('grenze');
+		$table->addColumn('lang', Types::STRING, ['notnull' => true, 'length' => 16383]);
+		$table->addColumn('x', Types::BOOLEAN, ['notnull' => true]);`
+	assert.equal(zeile({ V1 }).code, 0)
+	assert.equal(zeile({ V1, V2: "		$schema->getTable('grenze')->getColumn('x')->setNotnull(false);" }).code, 1)
+})
+
+test('Zeilengroesse: ein spaeterer dropColumn rettet die fruehere Migration nicht, gemeldet wird einmal', () => {
+	const V1 = `		$table = $schema->createTable('grenze');
+		$table->addColumn('lang', Types::STRING, ['notnull' => true, 'length' => 16383]);
+		$table->addColumn('x', Types::SMALLINT, ['notnull' => true]);`
+	const V2 = `		$table = $schema->getTable('grenze');
+		$table->addColumn('y', Types::SMALLINT, ['notnull' => true]);
+		$table->dropColumn('x');`
+	const { code, ausgabe } = zeile({ V1, V2 })
+	assert.equal(code, 1, ausgabe)
+	assert.match(ausgabe, /V1\.php/)
+	assert.equal(ausgabe.match(/braucht [\d.]+ Byte je Zeile/g)?.length, 1)
+})
+
+test('Zeilengroesse: DECIMAL, BINARY und GUID mit gemessenen Groessen', () => {
+	// 16.380 x 4 + 2 = 65.522; der Rest bis 65.535 sind 13 Byte.
+	const mit = (zusatz) => zeile({ V1: `		$table = $schema->createTable('t');
+		$table->addColumn('lang', Types::STRING, ['notnull' => true, 'length' => 16380]);
+		${zusatz}` }).code
+	assert.equal(mit("$table->addColumn('d', Types::DECIMAL, ['notnull' => true, 'precision' => 10, 'scale' => 2]);"), 0)
+	assert.equal(mit("$table->addColumn('d', Types::DECIMAL, ['notnull' => true, 'precision' => 30, 'scale' => 10]);"), 1)
+	assert.equal(mit("$table->addColumn('b', Types::BINARY, ['notnull' => true, 'length' => 12]);"), 0)
+	assert.equal(mit("$table->addColumn('b', Types::BINARY, ['notnull' => true, 'length' => 13]);"), 1)
+	assert.equal(mit("$table->addColumn('g', 'guid', ['notnull' => true]);"), 1)
+})
+
+test('Zeilengroesse: neu zugewiesene Variable bekommt die Aenderung, nicht die alte Spalte', () => {
+	const V1 = `		$table = $schema->createTable('t');
+		$table->addColumn('a', Types::STRING, ['notnull' => true, 'length' => 16000]);
+		$column = $table->getColumn('a');
+		$column = $table->addColumn('c', Types::STRING, ['notnull' => true, 'length' => 10]);
+		$column->setLength(16300);`
+	assert.equal(zeile({ V1 }).code, 1)
+})
+
+test('Zeilengroesse: Apps ohne mysql bekommen keine Hinweise dazu', () => {
+	const { ausgabe } = zeile({ V1: `		$table = $schema->createTable('t');
+		$table->dropColumn($col);` }, ['pgsql', 'sqlite'])
+	assert.doesNotMatch(ausgabe, /Zeilengroesse/)
+})

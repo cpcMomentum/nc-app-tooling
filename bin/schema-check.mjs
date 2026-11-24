@@ -135,7 +135,7 @@ let tabellen = 0
 // eine Zusage, die er nicht gibt.
 const unklar = []
 
-const AUFRUF = /(\$[A-Za-z_]\w*)\s*->\s*(createTable|getTable|dropTable|addColumn|dropColumn|changeColumn|getColumn|setType|setLength|setNotnull|addIndex|addUniqueIndex|setPrimaryKey)\s*\(/g
+const AUFRUF = /(\$[A-Za-z_]\w*|\))\s*->\s*(createTable|getTable|dropTable|addColumn|dropColumn|changeColumn|getColumn|setType|setLength|setNotnull|addIndex|addUniqueIndex|setPrimaryKey)\s*\(/g
 
 // --- Zeilengroesse MySQL/MariaDB ---------------------------------------------
 
@@ -187,7 +187,7 @@ const spaltenVon = (tabelle) => {
 
 /** Typname aus `Type::getType('smallint')` oder `Type::getType(Types::SMALLINT)`. */
 function typAusGetType(arg) {
-	const m = arg.match(/getType\(\s*(?:Types::([A-Z_]+)|['"]([a-z_]+)['"])/)
+	const m = arg.match(/getType\(\s*(?:[\\\w]*Types?::([A-Z_]+)|['"]([a-z_]+)['"])/)
 	return m ? (m[1] ?? m[2]).toLowerCase() : null
 }
 
@@ -197,11 +197,13 @@ function aendereSpalte(datei, zeile, tabelle, spalte, methode, arg) {
 	if (!eintrag) return
 	if (methode === 'setType') {
 		const typ = typAusGetType(arg)
-		if (typ) eintrag.typ = typ
-		else zeileUnklar.push(`${datei}:${zeile}  "${tabelle}"."${spalte}" setType(${arg.trim()})`)
+		eintrag.typ = typ
+		if (!typ) zeileUnklar.push(`${datei}:${zeile}  "${tabelle}"."${spalte}" setType(${arg.trim()}) (nicht in der Zeilengroesse)`)
 	} else if (methode === 'setLength') {
 		const n = arg.trim().match(/^\d+$/)
-		if (n) eintrag.opt = { ...eintrag.opt, length: Number(n[0]) }
+		const { length, ...ohneLaenge } = eintrag.opt
+		if (n) eintrag.opt = { ...ohneLaenge, length: Number(n[0]) }
+		else if (arg.trim().toLowerCase() === 'null') eintrag.opt = ohneLaenge
 		else zeileUnklar.push(`${datei}:${zeile}  "${tabelle}"."${spalte}" setLength(${arg.trim()})`)
 	} else if (methode === 'setNotnull') {
 		const wert = arg.trim().toLowerCase()
@@ -254,14 +256,16 @@ for (const datei of dateien) {
 	let letzte = null
 	// Variable → { tabelle, spalte } aus `$column = $table->getColumn('x')`.
 	const spaltenBindung = new Map()
+	let letzteSpalte = null
 	const beruehrt = new Set()
+	const zuweisungVor = (index) => quelle.slice(Math.max(0, index - 120), index).match(/(\$[A-Za-z_]\w*)\s*=\s*[^;]*$/)?.[1]
 
 	AUFRUF.lastIndex = 0
 	let m
 	while ((m = AUFRUF.exec(quelle)) !== null) {
 		const [treffer, empfaenger, methode] = m
 		const klammerAuf = m.index + treffer.length - 1
-		const { args, ende } = argumente(quelle, klammerAuf)
+		const { args } = argumente(quelle, klammerAuf)
 		const zeile = zeileVon(quelle, m.index)
 
 		if (methode === 'dropTable') {
@@ -271,7 +275,7 @@ for (const datei of dateien) {
 		}
 
 		if (methode === 'setType' || methode === 'setLength' || methode === 'setNotnull') {
-			const ziel = spaltenBindung.get(empfaenger)
+			const ziel = empfaenger === ')' ? letzteSpalte : spaltenBindung.get(empfaenger)
 			if (ziel) {
 				aendereSpalte(datei, zeile, ziel.tabelle, ziel.spalte, methode, args[0] ?? '')
 				beruehrt.add(ziel.tabelle)
@@ -304,16 +308,11 @@ for (const datei of dateien) {
 
 		if (methode === 'getColumn') {
 			const spalte = alsName(args[0] ?? '')
-			if (!spalte) continue
-			const davor = quelle.slice(Math.max(0, m.index - 120), m.index)
-			const zuweisung = davor.match(/(\$[A-Za-z_]\w*)\s*=\s*[^;]*$/)
-			if (zuweisung) spaltenBindung.set(zuweisung[1], { tabelle: tabelle.name, spalte })
-			// Verkettet: `$table->getColumn('x')->setLength(1000)`.
-			const kette = /^\s*->\s*(setType|setLength|setNotnull)\s*\(/.exec(quelle.slice(ende + 1))
-			if (kette) {
-				const kettenArgs = argumente(quelle, ende + 1 + kette[0].length - 1).args
-				aendereSpalte(datei, zeile, tabelle.name, spalte, kette[1], kettenArgs[0] ?? '')
-				beruehrt.add(tabelle.name)
+			letzteSpalte = spalte ? { tabelle: tabelle.name, spalte } : null
+			const variable = zuweisungVor(m.index)
+			if (variable) {
+				if (letzteSpalte) spaltenBindung.set(variable, letzteSpalte)
+				else spaltenBindung.delete(variable)
 			}
 			continue
 		}
@@ -332,9 +331,8 @@ for (const datei of dateien) {
 			const eintrag = spalte ? spaltenVon(tabelle.name).get(spalte) : null
 			if (eintrag) {
 				const neu = optionen(args[1] ?? '')
-				const typ = typAusGetType(args[1] ?? '')
 				eintrag.opt = { ...eintrag.opt, ...neu }
-				if (typ) eintrag.typ = typ
+				if (/['"]type['"]\s*=>/.test(args[1] ?? '')) eintrag.typ = typAusGetType(args[1] ?? '')
 				eintrag.datei = datei
 				eintrag.zeile = zeile
 				beruehrt.add(tabelle.name)
@@ -353,6 +351,9 @@ for (const datei of dateien) {
 			// angelegt (projektwerk Migration 13) zaehlt einmal.
 			spaltenVon(tabelle.name).set(name ?? roh, { typ, opt, datei, zeile })
 			beruehrt.add(tabelle.name)
+			letzteSpalte = { tabelle: tabelle.name, spalte: name ?? roh }
+			const variable = zuweisungVor(m.index)
+			if (variable) spaltenBindung.set(variable, letzteSpalte)
 			if (mysqlRelevant && (typ === null || spaltenBytes(typ, opt) === null)) {
 				zeileUnklar.push(`${datei}:${zeile}  "${tabelle.name}"."${name ?? roh}" Typ ${(args[1] ?? '').trim()} (nicht in der Zeilengroesse)`)
 			}
@@ -384,8 +385,7 @@ for (const datei of dateien) {
 	// Tabellennamen erst am Ende der Datei bewerten: ob der Primaerschluessel
 	// einen eigenen Namen bekommt, steht erst nach den Spalten fest.
 	for (const tabelle of angelegte) pruefeTabellenname(datei, tabelle)
-	// Je Migration bewerten: NC wendet das Schema nach jedem Schritt an, ein
-	// spaeterer dropColumn rettet eine fruehere Migration nicht.
+	// Je Migration: Upgrades wenden jede Migration einzeln an, Neuinstallationen nur das Endschema.
 	pruefeZeilengroesse(datei, beruehrt)
 }
 
@@ -482,7 +482,7 @@ function pruefeTabellenname(datei, tabelle) {
 const umfang = `${dateien.length} Migration(en), ${tabellen} neue Tabelle(n), ${spalten} Spalte(n)`
 
 function nenneUnklare() {
-	if (zeileUnklar.length) {
+	if (mysqlRelevant && zeileUnklar.length) {
 		console.log(yellow(`⚐ Zeilengroesse MySQL/MariaDB an ${zeileUnklar.length} Stelle(n) nur teilweise geprueft:`))
 		zeileUnklar.forEach((u) => console.log(`  ${u}`))
 		console.log('')

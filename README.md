@@ -939,6 +939,12 @@ eigenen Health-Check.
 Die Checks heißen `install-db / Installation (mariadb)` und
 `install-db / Installation (mysql)`.
 
+Grenzen: Eine Neuinstallation wendet nur das Endschema aller Migrationen an.
+Scheitert ein Upgrade an einem Zwischenstand, sieht dieser Lauf das nicht; das
+meldet `nc-schema-check`, der jede Migration einzeln bewertet. Kann der
+abgeleitete Zweig `stable<min-version>` PHP 8.4 nicht, `php-version` oder
+`server-branch` setzen.
+
 ## Geteilter Workflow `e2e`
 
 Playwright-Klicktests gegen eine **echte, bedienbare Nextcloud**. Viele Fehler
