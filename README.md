@@ -795,6 +795,58 @@ behoben hat.
 | 0 | keine Fehler |
 | 1 | mindestens ein Fehler, oder kein App-Verzeichnis |
 
+## `nc-install-check`
+
+Ersetzt die Release-Checks 8, 11 und 14 (Archive_Tar, Installation, Upgrade),
+die bisher als Shell-Text im Release-Skill standen. Läuft in
+**Wegwerf-Containern**, die Dev-Instanz wird nicht angefasst.
+
+```bash
+npx nc-install-check <app>-vX.Y.Z.tar.gz          # im Wurzelverzeichnis der App
+npx nc-install-check <tarball> --image nextcloud:33
+npx nc-install-check <tarball> --vorversion ../<app>-v1.2.2.tar.gz
+npx nc-install-check <tarball> --ohne-upgrade     # erstes Release
+npx nc-install-check <tarball> --keep             # Container bei Befund behalten
+```
+
+Anlass (#51): Check 11 hat bei **jedem** Release „OK“ gemeldet, ohne zu prüfen.
+`occ integrity:check-app` bricht ab, solange die Version im Ordner neuer ist als
+die installierte, und meldet dabei mit **Exit 0**:
+
+```
+Nextcloud or one of the apps require upgrade - only a limited number of commands are available
+```
+
+Der Skill suchte nur nach Fehlerwörtern. Außerdem ist auf der Dev-Instanz
+`/var/www/html` komplett vom Mac eingehängt; der Mount-Check auf
+`custom_apps/<app>` fand das nicht, und `mv`/`rm` liefen auf der Dev-Kopie.
+
+Ablauf, je Phase ein frischer Container aus dem Image von `nextcloud-dev`
+(oder `--image`), SQLite, rund 10 Sekunden bis bereit:
+
+1. **Frischinstallation.** Tarball wie der Core-Installer einspielen
+   (`Installer::downloadApp` in NC 34: Archive_Tar, alten Ordner löschen,
+   kopieren mit `FilenameValidator::isForbidden`). Genau ein Ordner, Dateizahl
+   im Tarball gleich entpackt, nichts vom Filter entfernt. `occ app:enable`,
+   `installed_version`, Integrität, `IAppManager::loadApp`, Startseite per HTTP.
+2. **Upgrade.** Vorversion einspielen und aktivieren, neue drüber, `occ upgrade`,
+   `occ status` mit `needsDbUpgrade: false`, `installed_version`, Integrität,
+   Laden, Startseite. Die Vorversion ist der höchste Git-Tag unter der neuen
+   Version; der Tarball kommt aus `../<app>-vX.tar.gz` oder von GitHub.
+3. **Gegenprobe.** Eine signierte Datei unter `lib/` löschen, die
+   Integritätsprüfung muss das melden. Sonst trägt das Grün oben nicht
+   (Images mit Kanal `git` prüfen gar nicht).
+
+Die Integritätsprüfung gilt nur als bestanden bei Exit 0 **und** leerer
+Ausgabe. Ein Startseiten-Status 4xx ist ein Hinweis (nicht jede App hat eine),
+5xx ein Befund.
+
+| Exit | Bedeutung |
+|---|---|
+| 0 | bestanden |
+| 1 | Befund — **nicht veröffentlichen** |
+| 2 | Aufruf- oder Umgebungsfehler (Docker, Image, Vorversion nicht ladbar) |
+
 ## Verbreitung messen (`verbreitung.yml`)
 
 Der Workflow `verbreitung` misst **quartalsweise** (1.1., 1.4., 1.7., 1.10.) die
