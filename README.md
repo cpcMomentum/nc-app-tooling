@@ -248,11 +248,39 @@ Geprüft wird gegen NCs eigene Regeln aus
 | `notnull` mit `default => ''`, Spalte an bestehende Tabelle | blockiert |
 | `Types::STRING` mit `length` über 4000 | blockiert |
 | Tabellen-, Spalten-, Index- und Schlüsselnamen über dem Limit | blockiert |
+| Tabelle über 65.535 Byte je Zeile auf MySQL/MariaDB | blockiert |
 
 Die zweite Zeile der Tabelle liest sich harmlos und ist die unauffälligste
 Falle: Doctrine setzt `Column::$_notnull` auf **true**, wenn die Option fehlt.
 Wer `notnull` weglässt, bekommt NOT NULL — und bei einer Boolean-Spalte damit
 denselben Abbruch wie der, der es hinschreibt.
+
+### Zeilengröße auf MySQL/MariaDB
+
+projektwerk ließ sich auf MariaDB 11 und MySQL 8.4 nicht installieren
+(`1118 Row size too large`, projektwerk#510). Beide erlauben je Zeile 65.535
+Byte. Der Prüfer führt jede Tabelle über alle Migrationen in Dateireihenfolge
+fort (`addColumn`, `dropColumn`, `changeColumn`, `getColumn()->setType()` und
+`setLength()`, `dropTable`) und bewertet sie nach jeder Migration. Dieselbe
+Spalte hinter `hasColumn()` erneut angelegt zählt einmal.
+
+Die Byte-Werte sind gegen `mariadb:11` und `mysql:8.4` gemessen, beide liefern
+dieselben:
+
+| Typ | Byte |
+|---|---|
+| `STRING` (VARCHAR, utf8mb4) | 4 je Zeichen + 1 Längenbyte, ab 64 Zeichen + 2; ohne `length` gilt 255 |
+| `TEXT`, `BLOB`, `JSON` | 12 |
+| `BIGINT` / `INTEGER` / `SMALLINT` / `BOOLEAN` | 8 / 4 / 2 / 1 |
+| `DATETIME` / `DATE` / `TIME` | 5 / 3 / 3 |
+| `FLOAT` / `DECIMAL(10,0)` | 8 / 5 |
+| nullable Spalten | 1 Byte Null-Bitmap je angefangene 8 |
+
+Vier `STRING`-Spalten mit 4.000 Zeichen allein passen (64.016 Byte mit `id`).
+Gerissen hat es projektwerk erst mit den übrigen Spalten der Tabelle. Die
+Regel greift, wenn `info.xml` `mysql` deklariert oder gar keine Datenbank
+nennt. Spaltentypen, die erst zur Laufzeit feststehen, und `dropColumn($var)`
+nennt der Prüfer, statt sie still zu übergehen.
 
 ### Die zwei Gültigkeitsbedingungen
 
@@ -868,6 +896,54 @@ dem Job-PHP auch auflöst, muss der Platform-Pin für den Wegwerf-Testlauf weich
   (nur im Arbeitsverzeichnis des Laufs, nichts davon wird committet).
 - **`nc-compat.yml`**, vor dem Kompat-Test: `composer config --unset platform.php`,
   damit der Wächter beim nächsten Major wirklich testet.
+
+## Geteilter Workflow `install-db`
+
+Installiert die App frisch auf **MariaDB 11 und MySQL 8.4** und macht den Lauf
+rot, wenn eine Migration dort scheitert. SQLite und Postgres verbergen Fehler
+wie die Zeilengröße (projektwerk#510). `nc-schema-check` fängt die bekannten
+Regeln statisch ab, dieser Lauf ist die Probe gegen die echte Datenbank.
+
+```yaml
+name: install-db
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  install-db:
+    uses: cpcMomentum/nc-app-tooling/.github/workflows/install-db.yml@v1.25.0
+```
+
+Ablauf je Datenbank: `nextcloud/server` auf `stable<min-version>` auschecken,
+`composer install --no-dev` in der App (falls `composer.json`), Nextcloud mit
+der Datenbank installieren, `occ app:enable`, danach muss
+`installed_version` gesetzt sein. Im Fehlerfall steht `nextcloud.log` im Lauf.
+`mariadb:11` enthält kein `mysqladmin` mehr, deshalb hat jede Datenbank ihren
+eigenen Health-Check.
+
+| Eingabe | Standard | |
+|---|---|---|
+| `php-version` | `8.4` | PHP des Servers |
+| `server-branch` | leer | Zweig von `nextcloud/server`, leer = `stable<min-version>` |
+
+Die Checks heißen `install-db / Installation (mariadb)` und
+`install-db / Installation (mysql)`.
+
+Grenzen: Eine Neuinstallation wendet nur das Endschema aller Migrationen an.
+Scheitert ein Upgrade an einem Zwischenstand, sieht dieser Lauf das nicht; das
+meldet `nc-schema-check`, der jede Migration einzeln bewertet. Kann der
+abgeleitete Zweig `stable<min-version>` PHP 8.4 nicht, `php-version` oder
+`server-branch` setzen.
 
 ## Geteilter Workflow `e2e`
 

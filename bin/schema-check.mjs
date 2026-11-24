@@ -40,6 +40,12 @@
  * NC-Version einen NC-Container samt Datenbank. Fuer vier klar umrissene
  * Regeln, deren Quelltext hier zeilengenau nachgelesen ist, steht das nicht im
  * Verhaeltnis. Die Grenze des Verfahrens steht in der README.
+ *
+ * ZEILENGROESSE (#50): projektwerk liess sich auf MariaDB 11 und MySQL 8.4
+ * nicht installieren ("1118 Row size too large", projektwerk#510). Beide
+ * erlauben je Zeile 65.535 Byte; VARCHAR zaehlt mit 4 Byte je Zeichen
+ * (utf8mb4), TEXT nur mit 12. Die Byte-Werte je Typ sind gegen mariadb:11 und
+ * mysql:8.4 gemessen (25.11.2026), siehe MYSQL_BYTES.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
@@ -71,6 +77,8 @@ const datenbanken = [...info.matchAll(/<database\b[^>]*>([^<]*)<\/database>/g)].
 // Der Konstruktor von MigrationService: keine <database>-Deklaration heisst
 // "koennte auf Oracle laufen" — und dann greifen die Oracle-Regeln.
 const oracleRelevant = datenbanken.length === 0 || datenbanken.includes('oci')
+// Dieselbe Lesart fuer MySQL/MariaDB: keine Deklaration heisst "darf dort laufen".
+const mysqlRelevant = datenbanken.length === 0 || datenbanken.includes('mysql')
 
 const minTreffer = info.match(/<nextcloud[^>]*\bmin-version="(\d+)"/)
 const minVersion = minTreffer ? Number(minTreffer[1]) : 0
@@ -108,6 +116,10 @@ function optionen(arg) {
 	if (laenge) o.length = Number(laenge[1])
 	const vorgabe = arg.match(/['"]default['"]\s*=>\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^,\]\s]+)/i)
 	if (vorgabe) o.default = vorgabe[1].trim()
+	const praezision = arg.match(/['"]precision['"]\s*=>\s*(\d+)/i)
+	if (praezision) o.precision = Number(praezision[1])
+	const nachkomma = arg.match(/['"]scale['"]\s*=>\s*(\d+)/i)
+	if (nachkomma) o.scale = Number(nachkomma[1])
 	return o
 }
 
@@ -123,7 +135,117 @@ let tabellen = 0
 // eine Zusage, die er nicht gibt.
 const unklar = []
 
-const AUFRUF = /(\$[A-Za-z_]\w*)\s*->\s*(createTable|getTable|addColumn|addIndex|addUniqueIndex|setPrimaryKey)\s*\(/g
+const AUFRUF = /(\$[A-Za-z_]\w*|\))\s*->\s*(createTable|getTable|dropTable|addColumn|dropColumn|changeColumn|getColumn|setType|setLength|setNotnull|addIndex|addUniqueIndex|setPrimaryKey)\s*\(/g
+
+// --- Zeilengroesse MySQL/MariaDB ---------------------------------------------
+
+const MYSQL_ZEILE_MAX = 65_535
+
+// Byte je Spalte in der Zeilengrenze, gemessen gegen mariadb:11 und mysql:8.4
+// (VARBINARY(n) plus Testspalte, Binaersuche auf n). Beide Datenbanken lieferten
+// dieselben Werte. Doctrine bildet die Typen auf MySQL so ab: TEXT → LONGTEXT,
+// BLOB → LONGBLOB, BOOLEAN → TINYINT(1), FLOAT → DOUBLE PRECISION, GUID → CHAR(36).
+const MYSQL_BYTES = {
+	text: 12, blob: 12, json: 12,
+	bigint: 8, integer: 4, smallint: 2, boolean: 1,
+	float: 8, smallfloat: 4,
+	date: 3, date_immutable: 3, time: 3, time_immutable: 3,
+	datetime: 5, datetime_immutable: 5, datetime_tz: 5, datetimetz: 5,
+	datetime_tz_immutable: 5, datetimetz_immutable: 5,
+	guid: 36 * 4,
+}
+
+/** MySQL DECIMAL: je 9 Ziffern 4 Byte, der Rest nach Tabelle, Vor- und Nachkomma getrennt. */
+function decimalBytes(praezision, nachkomma) {
+	const rest = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4]
+	const teil = (ziffern) => Math.floor(ziffern / 9) * 4 + rest[ziffern % 9]
+	return teil(praezision - nachkomma) + teil(nachkomma)
+}
+
+/** Byte einer Spalte in der Zeilengrenze, null bei unbekanntem Typ. */
+function spaltenBytes(typ, opt) {
+	// VARCHAR/VARBINARY: Inhalt plus 1 Laengenbyte, ab 256 Byte Inhalt 2.
+	const variabel = (inhalt) => inhalt + (inhalt > 255 ? 2 : 1)
+	// Ohne 'length' setzt Doctrine 255.
+	if (typ === 'string' || typ === 'ascii_string') return variabel((opt.length ?? 255) * 4)
+	if (typ === 'binary') return variabel(opt.length ?? 255)
+	if (typ === 'decimal') return decimalBytes(opt.precision ?? 10, opt.scale ?? 0)
+	return MYSQL_BYTES[typ] ?? null
+}
+
+// Tabelle → Spalte → { typ, opt, datei, zeile }, fortgeschrieben ueber alle
+// Migrationen in Dateireihenfolge, wie NC sie ausfuehrt.
+const zeilenStand = new Map()
+const zeileGemeldet = new Set()
+// Was die Zeilengroesse nicht sehen kann, wird genannt (wie `unklar`).
+const zeileUnklar = []
+
+const spaltenVon = (tabelle) => {
+	if (!zeilenStand.has(tabelle)) zeilenStand.set(tabelle, new Map())
+	return zeilenStand.get(tabelle)
+}
+
+/** Typname aus `Type::getType('smallint')` oder `Type::getType(Types::SMALLINT)`. */
+function typAusGetType(arg) {
+	const m = arg.match(/getType\(\s*(?:[\\\w]*Types?::([A-Z_]+)|['"]([a-z_]+)['"])/)
+	return m ? (m[1] ?? m[2]).toLowerCase() : null
+}
+
+/** setType/setLength/setNotnull auf eine bekannte Spalte anwenden. */
+function aendereSpalte(datei, zeile, tabelle, spalte, methode, arg) {
+	const eintrag = spaltenVon(tabelle).get(spalte)
+	if (!eintrag) return
+	if (methode === 'setType') {
+		const typ = typAusGetType(arg)
+		eintrag.typ = typ
+		if (!typ) zeileUnklar.push(`${datei}:${zeile}  "${tabelle}"."${spalte}" setType(${arg.trim()}) (nicht in der Zeilengroesse)`)
+	} else if (methode === 'setLength') {
+		const n = arg.trim().match(/^\d+$/)
+		const { length, ...ohneLaenge } = eintrag.opt
+		if (n) eintrag.opt = { ...ohneLaenge, length: Number(n[0]) }
+		else if (arg.trim().toLowerCase() === 'null') eintrag.opt = ohneLaenge
+		else zeileUnklar.push(`${datei}:${zeile}  "${tabelle}"."${spalte}" setLength(${arg.trim()})`)
+	} else if (methode === 'setNotnull') {
+		const wert = arg.trim().toLowerCase()
+		if (wert === 'true' || wert === 'false') eintrag.opt = { ...eintrag.opt, notnull: wert === 'true' }
+	}
+	eintrag.datei = datei
+	eintrag.zeile = zeile
+}
+
+/** Bewertet die Tabellen, die eine Migration angefasst hat. */
+function pruefeZeilengroesse(datei, beruehrt) {
+	if (!mysqlRelevant) return
+	for (const name of beruehrt) {
+		const spalten = zeilenStand.get(name)
+		if (!spalten || zeileGemeldet.has(name)) continue
+		let summe = 0
+		let nullbar = 0
+		const posten = []
+		for (const [spalte, e] of spalten) {
+			const bytes = spaltenBytes(e.typ, e.opt)
+			if (bytes === null) continue
+			summe += bytes
+			if (e.opt.notnull === false) nullbar++
+			posten.push({ spalte, bytes, e })
+		}
+		// Null-Bitmap: ein Byte je acht nullable Spalten, gemessen.
+		summe += Math.ceil(nullbar / 8)
+		if (summe <= MYSQL_ZEILE_MAX) continue
+		zeileGemeldet.add(name)
+		const groesste = posten.sort((a, b) => b.bytes - a.bytes).slice(0, 4)
+			.map((p) => `${p.spalte} (${p.e.typ}${p.e.opt.length ? ` ${p.e.opt.length}` : ''}: ${zahl(p.bytes)} Byte, ${p.e.datei}:${p.e.zeile})`)
+		// Gemeldet an der Stelle, die zuletzt etwas an der Tabelle aenderte.
+		const letzte = [...spalten.values()].filter((e) => e.datei === datei).sort((a, b) => b.zeile - a.zeile)[0]
+		melde(datei, letzte?.zeile ?? 1, 'Zeilengroesse MySQL/MariaDB',
+			`"${name}" braucht ${zahl(summe)} Byte je Zeile, MySQL/MariaDB erlauben ${zahl(MYSQL_ZEILE_MAX)} `
+				+ '("1118 Row size too large" beim Installieren).',
+			`Groesste Spalten: ${groesste.join(', ')}. STRING zaehlt 4 Byte je Zeichen (utf8mb4), `
+				+ 'Types::TEXT nur 12 Byte. Lange Texte als Types::TEXT anlegen.')
+	}
+}
+
+const zahl = (n) => n.toLocaleString('de-DE')
 
 for (const datei of dateien) {
 	const quelle = readFileSync(datei, 'utf8')
@@ -132,6 +254,11 @@ for (const datei of dateien) {
 	const bindung = new Map()
 	const angelegte = []
 	let letzte = null
+	// Variable → { tabelle, spalte } aus `$column = $table->getColumn('x')`.
+	const spaltenBindung = new Map()
+	let letzteSpalte = null
+	const beruehrt = new Set()
+	const zuweisungVor = (index) => quelle.slice(Math.max(0, index - 120), index).match(/(\$[A-Za-z_]\w*)\s*=\s*[^;]*$/)?.[1]
 
 	AUFRUF.lastIndex = 0
 	let m
@@ -141,9 +268,25 @@ for (const datei of dateien) {
 		const { args } = argumente(quelle, klammerAuf)
 		const zeile = zeileVon(quelle, m.index)
 
+		if (methode === 'dropTable') {
+			const name = alsName(args[0] ?? '')
+			if (name) zeilenStand.delete(name)
+			continue
+		}
+
+		if (methode === 'setType' || methode === 'setLength' || methode === 'setNotnull') {
+			const ziel = empfaenger === ')' ? letzteSpalte : spaltenBindung.get(empfaenger)
+			if (ziel) {
+				aendereSpalte(datei, zeile, ziel.tabelle, ziel.spalte, methode, args[0] ?? '')
+				beruehrt.add(ziel.tabelle)
+			}
+			continue
+		}
+
 		if (methode === 'createTable' || methode === 'getTable') {
 			const name = alsName(args[0] ?? '')
 			if (!name) continue
+			if (methode === 'createTable') zeilenStand.set(name, new Map())
 			const tabelle = { name, neu: methode === 'createTable', zeile, pkStandardname: false }
 			letzte = tabelle
 			// `$table = $schema->createTable('x');` — die Zuweisung steht links
@@ -163,6 +306,40 @@ for (const datei of dateien) {
 		const tabelle = bindung.get(empfaenger) ?? letzte
 		if (!tabelle) continue
 
+		if (methode === 'getColumn') {
+			const spalte = alsName(args[0] ?? '')
+			letzteSpalte = spalte ? { tabelle: tabelle.name, spalte } : null
+			const variable = zuweisungVor(m.index)
+			if (variable) {
+				if (letzteSpalte) spaltenBindung.set(variable, letzteSpalte)
+				else spaltenBindung.delete(variable)
+			}
+			continue
+		}
+
+		if (methode === 'dropColumn') {
+			const roh = (args[0] ?? '').trim()
+			const spalte = alsName(roh)
+			if (spalte) spaltenVon(tabelle.name).delete(spalte)
+			else zeileUnklar.push(`${datei}:${zeile}  "${tabelle.name}" dropColumn(${roh}) (Spalte erst zur Laufzeit bekannt, bleibt mitgezaehlt)`)
+			beruehrt.add(tabelle.name)
+			continue
+		}
+
+		if (methode === 'changeColumn') {
+			const spalte = alsName(args[0] ?? '')
+			const eintrag = spalte ? spaltenVon(tabelle.name).get(spalte) : null
+			if (eintrag) {
+				const neu = optionen(args[1] ?? '')
+				eintrag.opt = { ...eintrag.opt, ...neu }
+				if (/['"]type['"]\s*=>/.test(args[1] ?? '')) eintrag.typ = typAusGetType(args[1] ?? '')
+				eintrag.datei = datei
+				eintrag.zeile = zeile
+				beruehrt.add(tabelle.name)
+			}
+			continue
+		}
+
 		if (methode === 'addColumn') {
 			const roh = (args[0] ?? '').trim()
 			const name = alsName(roh)
@@ -170,6 +347,16 @@ for (const datei of dateien) {
 			const opt = optionen(args[2] ?? '')
 			if (!roh) continue
 			spalten++
+			// Nach Namen gefuehrt: dieselbe Spalte hinter hasColumn() erneut
+			// angelegt (projektwerk Migration 13) zaehlt einmal.
+			spaltenVon(tabelle.name).set(name ?? roh, { typ, opt, datei, zeile })
+			beruehrt.add(tabelle.name)
+			letzteSpalte = { tabelle: tabelle.name, spalte: name ?? roh }
+			const variable = zuweisungVor(m.index)
+			if (variable) spaltenBindung.set(variable, letzteSpalte)
+			if (mysqlRelevant && (typ === null || spaltenBytes(typ, opt) === null)) {
+				zeileUnklar.push(`${datei}:${zeile}  "${tabelle.name}"."${name ?? roh}" Typ ${(args[1] ?? '').trim()} (nicht in der Zeilengroesse)`)
+			}
 			if (!name) unklar.push(`${datei}:${zeile}  Spalte ${roh}`)
 			pruefeSpalte(datei, zeile, tabelle, name, roh, typ, opt)
 			continue
@@ -198,6 +385,8 @@ for (const datei of dateien) {
 	// Tabellennamen erst am Ende der Datei bewerten: ob der Primaerschluessel
 	// einen eigenen Namen bekommt, steht erst nach den Spalten fest.
 	for (const tabelle of angelegte) pruefeTabellenname(datei, tabelle)
+	// Je Migration: Upgrades wenden jede Migration einzeln an, Neuinstallationen nur das Endschema.
+	pruefeZeilengroesse(datei, beruehrt)
 }
 
 // --- Die Regeln -------------------------------------------------------------
@@ -293,6 +482,11 @@ function pruefeTabellenname(datei, tabelle) {
 const umfang = `${dateien.length} Migration(en), ${tabellen} neue Tabelle(n), ${spalten} Spalte(n)`
 
 function nenneUnklare() {
+	if (mysqlRelevant && zeileUnklar.length) {
+		console.log(yellow(`⚐ Zeilengroesse MySQL/MariaDB an ${zeileUnklar.length} Stelle(n) nur teilweise geprueft:`))
+		zeileUnklar.forEach((u) => console.log(`  ${u}`))
+		console.log('')
+	}
 	if (!unklar.length) return
 	console.log(yellow(`⚐ ${unklar.length} Bezeichner steht erst zur Laufzeit fest — Laenge ungeprueft:`))
 	unklar.forEach((u) => console.log(`  ${u}`))
