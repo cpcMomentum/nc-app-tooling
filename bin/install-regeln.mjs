@@ -12,6 +12,35 @@ function vergleiche(a, b) {
 	return 0
 }
 
+/** Gibt aus, woher die Vorversion kommt; ein Upgrade wird nur mit --ohne-upgrade still uebersprungen. */
+export function upgradePlan({ ohneUpgrade, vorversionArg, version, tags }) {
+	if (ohneUpgrade) return { art: 'ueberspringen' }
+	if (vorversionArg) return { art: 'datei', pfad: vorversionArg }
+	if (!SEMVER.test(version ?? '')) {
+		return { art: 'abbruch', grund: `Version "${version}" ist nicht X.Y.Z; --vorversion <tarball> angeben` }
+	}
+	if (tags === null) return { art: 'abbruch', grund: 'Release-Tags nicht lesbar; --vorversion <tarball> angeben' }
+	const vor = vorversion(tags, version)
+	if (!vor) {
+		return { art: 'abbruch', grund: `kein Release-Tag unter ${version}; beim ersten Release --ohne-upgrade angeben` }
+	}
+	return { art: 'tag', version: vor }
+}
+
+/** Befund, wenn die eingespielte Vorversion kein echtes Upgrade ergibt. */
+export function bewerteVorversion(alt, neu, erwartet) {
+	const a = alt?.match(SEMVER)?.slice(1).map(Number)
+	const n = neu?.match(SEMVER)?.slice(1).map(Number)
+	if (erwartet && alt !== erwartet) return `Vorversions-Tarball enthaelt ${alt || '(keine Version)'}, erwartet ${erwartet}`
+	if (!a || !n || vergleiche(a, n) >= 0) return `Vorversion ${alt || '(keine)'} liegt nicht unter ${neu}, das waere kein Upgrade`
+	return null
+}
+
+/** owner/repo aus der origin-URL, sonst null. */
+export function githubRepo(url) {
+	return url?.trim().match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/)?.slice(1).join('/') ?? null
+}
+
 /** Hoechster Release-Tag unter `version`, ohne fuehrendes v; null beim ersten Release. */
 export function vorversion(tags, version) {
 	const neu = version.match(SEMVER)?.slice(1).map(Number)
@@ -26,6 +55,8 @@ export function vorversion(tags, version) {
 /** Check 8 und der NC-Filter: Befunde aus dem Einspielen ueber Archive_Tar. */
 export function bewerteEinspielen(stats, app) {
 	const befunde = []
+	if (!stats.entpacktOk) befunde.push('Archive_Tar kann den Tarball nicht vollstaendig lesen')
+	if (stats.id !== app) befunde.push(`info.xml im Tarball hat die ID "${stats.id}", erwartet "${app}"`)
 	if (stats.top.length !== 1 || stats.top[0] !== app) {
 		befunde.push(`Tarball muss genau den Ordner "${app}" enthalten, gefunden: ${stats.top.join(', ') || '(nichts)'}`)
 	}
@@ -45,9 +76,10 @@ export function bewerteUpgrade(code, ausgabe) {
 	return treffer ? `occ upgrade meldet: ${treffer[0].trim()}` : null
 }
 
-/** 4xx ist nur ein Hinweis: nicht jede App hat eine Startseite. */
-export function bewerteHttp(status) {
+/** 4xx ist nur ein Hinweis: nicht jede App hat eine Startseite. Umleitung zum Login heisst: nicht angemeldet. */
+export function bewerteHttp(status, umleitung = '') {
 	const n = Number(status)
+	if (/\/login\b/.test(umleitung)) return { stufe: 'fehler', text: `HTTP ${status} zum Login, die Seite lief nicht` }
 	if (n >= 200 && n < 400) return { stufe: 'ok', text: `HTTP ${status}` }
 	if (n >= 400 && n < 500) return { stufe: 'hinweis', text: `HTTP ${status} (keine Startseite?)` }
 	return { stufe: 'fehler', text: `HTTP ${status}` }

@@ -1,49 +1,82 @@
 #!/usr/bin/env node
 // Release-Checks 8, 11, 14 in Wegwerf-Containern, weil /var/www/html der Dev-Instanz vom Mac eingehaengt ist.
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
-import { bewerteEinspielen, bewerteHttp, bewerteUpgrade, integritaetOk, vorversion } from './install-regeln.mjs'
+import {
+	bewerteEinspielen, bewerteHttp, bewerteUpgrade, bewerteVorversion, githubRepo, integritaetOk, upgradePlan,
+} from './install-regeln.mjs'
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`
 const dim = (s) => `\x1b[2m${s}\x1b[0m`
 
-const argv = process.argv.slice(2)
-const wert = (name) => {
-	const i = argv.indexOf(name)
-	return i >= 0 ? argv[i + 1] : undefined
-}
-const OPTIONEN_MIT_WERT = ['--image', '--vorversion']
-const tarballArg = argv.find((a, i) => !a.startsWith('--') && !OPTIONEN_MIT_WERT.includes(argv[i - 1]))
-const BEHALTEN = argv.includes('--keep')
-const OHNE_UPGRADE = argv.includes('--ohne-upgrade')
-
 function abbruch(text) {
 	console.error(red(`nc-install-check: ${text}`))
 	process.exit(2)
 }
+
+const OPTIONEN_MIT_WERT = ['--image', '--vorversion']
+const SCHALTER = ['--keep', '--ohne-upgrade']
+const optionen = {}
+const positionen = []
+const roh = process.argv.slice(2)
+for (let i = 0; i < roh.length; i++) {
+	const [name, gleich] = roh[i].split(/=(.*)/s)
+	if (OPTIONEN_MIT_WERT.includes(name)) optionen[name] = gleich ?? roh[++i]
+	else if (SCHALTER.includes(roh[i])) optionen[roh[i]] = true
+	else if (roh[i].startsWith('-')) abbruch(`unbekannte Option ${roh[i]}`)
+	else positionen.push(roh[i])
+}
+const wert = (name) => optionen[name]
+const tarballArg = positionen[0]
+const BEHALTEN = Boolean(optionen['--keep'])
+const OHNE_UPGRADE = Boolean(optionen['--ohne-upgrade'])
 
 if (!tarballArg || !existsSync(tarballArg)) {
 	abbruch(`Tarball nicht gefunden — ${tarballArg ?? '(kein Argument)'}\nAufruf: nc-install-check <app>-vX.Y.Z.tar.gz  (im Wurzelverzeichnis der App)`)
 }
 if (!existsSync('appinfo/info.xml')) abbruch('appinfo/info.xml nicht gefunden — im Wurzelverzeichnis der App ausfuehren.')
 const APP = readFileSync('appinfo/info.xml', 'utf8').match(/<id>\s*([^<\s]+)\s*<\/id>/)?.[1]
-if (!APP) abbruch('appinfo/info.xml enthaelt kein <id>-Element')
+if (!APP || !/^[a-z0-9_]+$/.test(APP)) abbruch(`appinfo/info.xml: ungueltige oder fehlende <id> (${APP ?? '-'})`)
 const TARBALL = resolve(tarballArg)
 
+class Abbruch extends Error {}
+const scheitern = (text) => { throw new Abbruch(text) }
+
+// Strg-C trifft den laufenden Kindprozess; dessen Signal bricht den Lauf ab, damit finally aufraeumt.
 function lauf(befehl, args, eingabe) {
 	const r = spawnSync(befehl, args, { encoding: 'utf8', input: eingabe, maxBuffer: 64 * 1024 * 1024 })
+	if (r.signal || r.status === 130) scheitern('abgebrochen')
 	return { code: r.status, aus: `${r.stdout ?? ''}${r.stderr ?? ''}`, stdout: r.stdout ?? '' }
 }
 const docker = (...args) => lauf('docker', args)
+const LABEL = 'nc-install-check.pid'
 
-if (docker('info').code !== 0) abbruch('Docker laeuft nicht.')
+try {
+	gunzipSync(readFileSync(resolve(tarballArg)))
+} catch (e) {
+	abbruch(`Tarball ist kein vollstaendiges gzip-Archiv (${e.message})`)
+}
+
+if (spawnSync('docker', ['info']).status !== 0) abbruch('Docker laeuft nicht.')
+
+// Reste eines abgeschossenen Laufs (SIGTERM, Terminal zu) raeumen; laufende Laeufe anderer Prozesse bleiben.
+const lebt = (pid) => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
+for (const zeile of spawnSync('docker', ['ps', '-a', '--filter', `label=${LABEL}`, '--format', `{{.Names}} {{.Label "${LABEL}"}}`],
+	{ encoding: 'utf8' }).stdout.split('\n').filter(Boolean)) {
+	const [name, pid] = zeile.split(' ')
+	if (!lebt(Number(pid))) {
+		console.log(yellow(`Liegengebliebenen Container entfernt: ${name}`))
+		spawnSync('docker', ['rm', '-f', name])
+	}
+}
 const IMAGE = wert('--image') ?? docker('inspect', '--format', '{{.Config.Image}}', 'nextcloud-dev').stdout.trim()
 if (!IMAGE) abbruch('Kein Image: nextcloud-dev nicht gefunden, bitte --image nextcloud:<version> angeben.')
 
@@ -78,9 +111,10 @@ if ($befehl === 'einspielen') {
 	$tmp = sys_get_temp_dir() . '/ic-' . bin2hex(random_bytes(4));
 	mkdir($tmp);
 	$tar = new Archive_Tar($tarball);
+	$liste = $tar->listContent();
 	$imTar = 0;
-	foreach ($tar->listContent() ?: [] as $e) if (in_array($e['typeflag'] ?? '', ['0', '', "\0"], true)) $imTar++;
-	$tar->extract($tmp);
+	foreach ($liste ?: [] as $e) if (in_array($e['typeflag'] ?? '', ['0', '', "\0"], true)) $imTar++;
+	$entpacktOk = $liste !== false && $tar->extract($tmp) === true;
 	$top = array_values(array_diff(scandir($tmp), ['.', '..']));
 	$quelle = count($top) === 1 ? "$tmp/{$top[0]}" : $tmp;
 	$entpackt = count(dateien($tmp));
@@ -99,7 +133,7 @@ if ($befehl === 'einspielen') {
 	mkdir($ziel);
 	$kopiere($quelle, $ziel);
 	$info = @simplexml_load_string((string)@file_get_contents("$quelle/appinfo/info.xml"));
-	echo json_encode(['top' => $top, 'imTar' => $imTar, 'entpackt' => $entpackt, 'kopiert' => count(dateien($ziel)),
+	echo json_encode(['entpacktOk' => $entpacktOk, 'id' => $info ? (string)$info->id : '', 'top' => $top, 'imTar' => $imTar, 'entpackt' => $entpackt, 'kopiert' => count(dateien($ziel)),
 		'gefiltert' => $gefiltert, 'version' => $info ? (string)$info->version : '']);
 	loesche($tmp);
 } elseif ($befehl === 'laden') {
@@ -129,18 +163,23 @@ function fehler(nr, text, details = '') {
 	befunde.push(`Check ${nr}: ${text}`)
 }
 
-class Abbruch extends Error {}
-const scheitern = (text) => { throw new Abbruch(text) }
+const tempOrdner = []
 
 function aufraeumen() {
+	for (const ordner of tempOrdner.splice(0)) rmSync(ordner, { recursive: true, force: true })
 	if (BEHALTEN && befunde.length) {
 		if (container.length) console.log(yellow(`\nContainer behalten: ${container.join(', ')} (docker rm -f …)`))
 		return
 	}
-	for (const name of container) docker('rm', '-f', name)
+	for (const name of container) spawnSync('docker', ['rm', '-f', name])
 	container.length = 0
 }
-process.on('SIGINT', () => { aufraeumen(); process.exit(130) })
+// Der Ablauf ist synchron, Signal-Handler kaemen nie dran; ein abgekoppelter Waechter raeumt nach jedem Ende auf.
+if (!BEHALTEN) {
+	spawn('sh', ['-c', `while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done; `
+		+ `docker ps -aq --filter label=${LABEL}=${process.pid} | xargs docker rm -f >/dev/null 2>&1`],
+	{ detached: true, stdio: 'ignore' }).unref()
+}
 
 class Instanz {
 	constructor(rolle) {
@@ -157,7 +196,7 @@ class Instanz {
 	}
 
 	starten() {
-		const r = docker('run', '-d', '--rm', '--name', this.name, IMAGE)
+		const r = docker('run', '-d', '--rm', '--label', `${LABEL}=${process.pid}`, '--name', this.name, IMAGE)
 		if (r.code !== 0) scheitern(`Container startet nicht (${IMAGE}): ${r.aus.trim()}`)
 		container.push(this.name)
 		// Solange PID 1 das Entrypoint-Skript ist, kopiert es noch den Server nach /var/www/html.
@@ -165,6 +204,9 @@ class Instanz {
 		while (docker('exec', this.name, 'grep', '-q', 'entrypoint', '/proc/1/cmdline').code === 0
 			|| docker('exec', this.name, 'test', '-f', '/var/www/html/version.php').code !== 0) {
 			if (Date.now() > bereit) scheitern(`${this.name}: Nextcloud nach 180 s nicht bereit`)
+			if (docker('inspect', '-f', '{{.State.Running}}', this.name).stdout.trim() !== 'true') {
+				scheitern(`${this.name}: Container ist beim Start beendet`)
+			}
 			spawnSync('sleep', ['1'])
 		}
 		const install = this.occ('maintenance:install', '--database', 'sqlite', '--admin-user', 'admin', '--admin-pass', this.passwort)
@@ -177,11 +219,15 @@ class Instanz {
 		docker('exec', this.name, 'chown', 'www-data', '/tmp/ic-app.tar.gz')
 		const r = this.php('einspielen', APP, '/tmp/ic-app.tar.gz')
 		if (r.code !== 0) scheitern(`${this.name}: Einspielen scheitert: ${r.aus.trim()}`)
-		return JSON.parse(r.stdout)
+		try {
+			return JSON.parse(r.stdout)
+		} catch {
+			return scheitern(`${this.name}: Ausgabe des Einspielens nicht lesbar: ${r.aus.trim().slice(0, 500)}`)
+		}
 	}
 
 	installierteVersion() {
-		return this.occ('config:app:get', APP, 'installed_version').stdout.trim()
+		return this.occ('config:app:get', APP, 'installed_version').stdout.trim().split('\n').pop().trim()
 	}
 
 	integritaet(nr) {
@@ -194,9 +240,9 @@ class Instanz {
 		const r = this.php('laden', APP)
 		if (r.code === 0) ok(nr, 'App laedt (IAppManager::loadApp)')
 		else fehler(nr, 'App laedt nicht', r.aus)
-		const http = docker('exec', this.name, 'curl', '-s', '-o', '/dev/null', '-w', '%{http_code}',
-			'-u', `admin:${this.passwort}`, `http://localhost/index.php/apps/${APP}/`).stdout.trim() || '000'
-		const b = bewerteHttp(http)
+		const [http = '000', umleitung = ''] = docker('exec', this.name, 'curl', '-s', '-o', '/dev/null', '-w', '%{http_code} %{redirect_url}',
+			'-u', `admin:${this.passwort}`, `http://localhost/index.php/apps/${APP}/`).stdout.trim().split(' ')
+		const b = bewerteHttp(http, umleitung)
 		if (b.stufe === 'ok') ok(nr, `Startseite ${b.text}`)
 		else if (b.stufe === 'hinweis') hinweis(nr, `Startseite ${b.text}`)
 		else fehler(nr, `Startseite ${b.text}`, docker('exec', this.name, 'tail', '-n', '20', '/var/www/html/data/nextcloud.log').aus)
@@ -230,23 +276,32 @@ function pruefeAktivieren(nr, instanz, version) {
 	return installiert === version
 }
 
-/** Vorgaenger-Tarball: --vorversion, ../<app>-vX.tar.gz wie im Release-Skill, sonst GitHub. */
+/** Release-Tags von origin, damit ein nicht geholter Tag nicht die falsche Vorversion liefert; null bei Fehler. */
+function releaseTags() {
+	const r = lauf('git', ['ls-remote', '--tags', '--refs', 'origin'])
+	if (r.code !== 0) return null
+	return r.stdout.split('\n').map((z) => z.split('refs/tags/')[1]).filter(Boolean)
+}
+
+/** Vorgaenger-Tarball: --vorversion, ../<app>-vX.tar.gz wie im Release-Skill, sonst GitHub; null nur bei --ohne-upgrade. */
 function vorgaengerTarball(version) {
-	if (wert('--vorversion')) return { pfad: resolve(wert('--vorversion')) }
-	const tags = lauf('git', ['tag', '--list']).stdout.split('\n')
-	const vor = vorversion(tags, version)
-	if (!vor) return null
+	const ohneTags = OHNE_UPGRADE || wert('--vorversion')
+	const plan = upgradePlan({ ohneUpgrade: OHNE_UPGRADE, vorversionArg: wert('--vorversion'), version, tags: ohneTags ? [] : releaseTags() })
+	if (plan.art === 'ueberspringen') return null
+	if (plan.art === 'abbruch') scheitern(plan.grund)
+	if (plan.art === 'datei') return { pfad: resolve(plan.pfad) }
+	const vor = plan.version
 	const lokal = resolve('..', `${APP}-v${vor}.tar.gz`)
 	if (existsSync(lokal)) return { pfad: lokal, version: vor }
+	const repo = githubRepo(lauf('git', ['remote', 'get-url', 'origin']).stdout) ?? `cpcMomentum/${APP}`
 	const ordner = mkdtempSync(join(tmpdir(), 'nc-install-check-'))
+	tempOrdner.push(ordner)
 	const pfad = join(ordner, `${APP}-v${vor}.tar.gz`)
-	const url = `https://github.com/cpcMomentum/${APP}/releases/download/v${vor}/${APP}-v${vor}.tar.gz`
-	const r = lauf('curl', ['-sfL', '-o', pfad, url])
-	if (r.code !== 0) {
-		rmSync(ordner, { recursive: true, force: true })
+	const url = `https://github.com/${repo}/releases/download/v${vor}/${APP}-v${vor}.tar.gz`
+	if (lauf('curl', ['-sfL', '-o', pfad, url]).code !== 0) {
 		scheitern(`Vorversion v${vor} nicht ladbar (${url}). --vorversion <tarball> oder --ohne-upgrade angeben.`)
 	}
-	return { pfad, version: vor, ordner }
+	return { pfad, version: vor }
 }
 
 function main() {
@@ -264,17 +319,19 @@ function main() {
 	}
 	let letzte = frisch
 
-	const vor = OHNE_UPGRADE ? null : vorgaengerTarball(VERSION)
+	const vor = vorgaengerTarball(VERSION)
 	console.log('\nUpgrade')
 	if (!vor) {
-		hinweis(14, OHNE_UPGRADE ? 'uebersprungen (--ohne-upgrade)' : `uebersprungen: kein Release-Tag unter ${VERSION}`)
+		hinweis(14, 'uebersprungen (--ohne-upgrade)')
 	} else {
 		aufraeumen()
 		const upgrade = new Instanz('upgrade')
 		upgrade.starten()
 		const alt = upgrade.einspielen(vor.pfad)
 		console.log(dim(`  von ${alt.version} auf ${VERSION}`))
-		if (pruefeAktivieren(14, upgrade, alt.version)) {
+		const unplausibel = bewerteVorversion(alt.version, VERSION, vor.version)
+		if (unplausibel) fehler(14, unplausibel)
+		else if (pruefeAktivieren(14, upgrade, alt.version)) {
 			pruefeEinspielen(14, upgrade.einspielen(TARBALL))
 			const r = upgrade.occ('upgrade')
 			const befund = bewerteUpgrade(r.code, r.aus)
@@ -289,7 +346,6 @@ function main() {
 			upgrade.integritaet(14)
 			upgrade.laden(14)
 		}
-		if (vor.ordner) rmSync(vor.ordner, { recursive: true, force: true })
 		letzte = upgrade
 	}
 
@@ -309,8 +365,7 @@ try {
 	main()
 } catch (e) {
 	aufraeumen()
-	if (!(e instanceof Abbruch)) throw e
-	console.error(red(`\nnc-install-check: ${e.message}`))
+	console.error(red(`\nnc-install-check: ${e instanceof Abbruch ? e.message : e.stack}`))
 	process.exit(2)
 } finally {
 	aufraeumen()
@@ -322,4 +377,6 @@ if (befunde.length) {
 	befunde.forEach((b) => console.log(red(`  • ${b}`)))
 	process.exit(1)
 }
-console.log(green('✓ nc-install-check: Installation, Upgrade und Integritaet bestanden.'))
+console.log(green(OHNE_UPGRADE
+	? '✓ nc-install-check: Installation und Integritaet bestanden. Upgrade NICHT geprueft (--ohne-upgrade).'
+	: '✓ nc-install-check: Installation, Upgrade und Integritaet bestanden.'))

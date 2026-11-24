@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { bewerteEinspielen, bewerteHttp, bewerteUpgrade, integritaetOk, vorversion } from '../bin/install-regeln.mjs'
+import { bewerteEinspielen, bewerteHttp, bewerteUpgrade, bewerteVorversion, githubRepo, integritaetOk, upgradePlan, vorversion } from '../bin/install-regeln.mjs'
 
 // --- Integritaet -------------------------------------------------------------
 
@@ -50,7 +50,7 @@ test('vorversion: erstes Release hat keine', () => {
 // --- Einspielen (Check 8) ----------------------------------------------------
 
 const stats = (ueber = {}) => ({
-	top: ['testapp'], imTar: 120, entpackt: 120, kopiert: 120, gefiltert: [], version: '1.2.3', ...ueber,
+	top: ['testapp'], id: 'testapp', entpacktOk: true, imTar: 120, entpackt: 120, kopiert: 120, gefiltert: [], version: '1.2.3', ...ueber,
 })
 
 test('einspielen: sauberer Tarball hat keinen Befund', () => {
@@ -102,4 +102,49 @@ test('http: 200 bestanden, 5xx und 000 Befund, 4xx Hinweis', () => {
 	assert.equal(bewerteHttp('500').stufe, 'fehler')
 	assert.equal(bewerteHttp('000').stufe, 'fehler')
 	assert.equal(bewerteHttp('404').stufe, 'hinweis')
+})
+
+test('einspielen: falsche ID im Tarball und abgebrochenes Entpacken sind Befunde', () => {
+	assert.equal(bewerteEinspielen(stats({ id: 'andere' }), 'testapp').length, 1)
+	assert.equal(bewerteEinspielen(stats({ entpacktOk: false }), 'testapp').length, 1)
+})
+
+test('http: Umleitung zum Login ist ein Befund', () => {
+	assert.equal(bewerteHttp('303', 'http://localhost/index.php/login?redirect_url=x').stufe, 'fehler')
+	assert.equal(bewerteHttp('303', 'http://localhost/index.php/apps/testapp/start').stufe, 'ok')
+})
+
+// --- Upgrade-Plan: nichts wird still uebersprungen ---------------------------
+
+test('upgradePlan: nur --ohne-upgrade ueberspringt', () => {
+	assert.equal(upgradePlan({ ohneUpgrade: true, version: '1.0.0', tags: [] }).art, 'ueberspringen')
+})
+
+test('upgradePlan: keine Tags, Git-Fehler, 4-teilige oder Vorab-Version brechen ab', () => {
+	assert.equal(upgradePlan({ version: '1.0.0', tags: [] }).art, 'abbruch')
+	assert.equal(upgradePlan({ version: '1.0.0', tags: null }).art, 'abbruch')
+	assert.equal(upgradePlan({ version: '1.0.0.1', tags: ['v0.9.0'] }).art, 'abbruch')
+	assert.equal(upgradePlan({ version: '1.0.0-rc.1', tags: ['v0.9.0'] }).art, 'abbruch')
+})
+
+test('upgradePlan: --vorversion vor Tags, sonst der Tag', () => {
+	assert.deepEqual(upgradePlan({ vorversionArg: 'x.tar.gz', version: '1.0.0.1', tags: null }), { art: 'datei', pfad: 'x.tar.gz' })
+	assert.deepEqual(upgradePlan({ version: '1.0.0', tags: ['v0.9.0', 'v0.8.0'] }), { art: 'tag', version: '0.9.0' })
+})
+
+test('vorversion pruefen: gleiche oder hoehere Version ist kein Upgrade', () => {
+	assert.equal(bewerteVorversion('0.6.1', '0.6.2'), null)
+	assert.match(bewerteVorversion('0.6.2', '0.6.2'), /kein Upgrade/)
+	assert.match(bewerteVorversion('0.7.0', '0.6.2'), /kein Upgrade/)
+	assert.match(bewerteVorversion('', '0.6.2'), /kein Upgrade/)
+})
+
+test('vorversion pruefen: lokaler Tarball muss zum Tag passen', () => {
+	assert.match(bewerteVorversion('0.6.0', '0.6.2', '0.6.1'), /erwartet 0\.6\.1/)
+})
+
+test('githubRepo: aus HTTPS- und SSH-URL', () => {
+	assert.equal(githubRepo('https://github.com/cpcMomentum/worktime.git'), 'cpcMomentum/worktime')
+	assert.equal(githubRepo('git@github.com:cpcMomentum/vinarium.git\n'), 'cpcMomentum/vinarium')
+	assert.equal(githubRepo('git@git.cpcmomentum.com:axel/x.git'), null)
 })

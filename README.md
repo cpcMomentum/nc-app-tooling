@@ -805,9 +805,16 @@ die bisher als Shell-Text im Release-Skill standen. Läuft in
 npx nc-install-check <app>-vX.Y.Z.tar.gz          # im Wurzelverzeichnis der App
 npx nc-install-check <tarball> --image nextcloud:33
 npx nc-install-check <tarball> --vorversion ../<app>-v1.2.2.tar.gz
-npx nc-install-check <tarball> --ohne-upgrade     # erstes Release
+npx nc-install-check <tarball> --ohne-upgrade     # nur beim ersten Release
 npx nc-install-check <tarball> --keep             # Container bei Befund behalten
 ```
+
+Ein Upgrade wird nie still übersprungen. Sind die Release-Tags von `origin`
+nicht lesbar, gibt es keinen Tag unter der neuen Version oder ist die Version
+nicht `X.Y.Z` (etwa `x.y.z.1`), bricht der Lauf mit Exit 2 ab. Dann
+`--vorversion` angeben, beim ersten Release `--ohne-upgrade`; die Schlusszeile
+sagt in dem Fall ausdrücklich, dass das Upgrade nicht geprüft wurde.
+Ein Vorversions-Tarball, der nicht unter der neuen Version liegt, ist ein Befund.
 
 Anlass (#51): Check 11 hat bei **jedem** Release „OK“ gemeldet, ohne zu prüfen.
 `occ integrity:check-app` bricht ab, solange die Version im Ordner neuer ist als
@@ -831,11 +838,18 @@ Ablauf, je Phase ein frischer Container aus dem Image von `nextcloud-dev`
    `installed_version`, Integrität, `IAppManager::loadApp`, Startseite per HTTP.
 2. **Upgrade.** Vorversion einspielen und aktivieren, neue drüber, `occ upgrade`,
    `occ status` mit `needsDbUpgrade: false`, `installed_version`, Integrität,
-   Laden, Startseite. Die Vorversion ist der höchste Git-Tag unter der neuen
-   Version; der Tarball kommt aus `../<app>-vX.tar.gz` oder von GitHub.
+   Laden, Startseite. Die Vorversion ist der höchste Tag von `origin` unter der
+   neuen Version (`git ls-remote`, also auch ohne vorheriges `git fetch`); der
+   Tarball kommt aus `../<app>-vX.tar.gz` oder aus den GitHub-Releases des
+   Repos hinter `origin`.
 3. **Gegenprobe.** Eine signierte Datei unter `lib/` löschen, die
    Integritätsprüfung muss das melden. Sonst trägt das Grün oben nicht
    (Images mit Kanal `git` prüfen gar nicht).
+
+Abbruch mit Strg-C, Terminal schließen oder `kill` hinterlässt keine
+Container: ein abgekoppelter Wächter entfernt sie, sobald der Lauf endet.
+Mit `--keep` bleiben sie bei einem Befund stehen; der nächste Lauf räumt sie
+weg.
 
 Die Integritätsprüfung gilt nur als bestanden bei Exit 0 **und** leerer
 Ausgabe. Ein Startseiten-Status 4xx ist ein Hinweis (nicht jede App hat eine),
