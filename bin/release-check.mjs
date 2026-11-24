@@ -241,8 +241,8 @@ try {
 }
 
 console.log('')
-console.log(dim('Nicht enthalten, weil sie eine laufende Nextcloud brauchen: Check 8'))
-console.log(dim('(Archive_Tar), 11 (NC-Filter-Simulation), 14 (Upgrade-Test). Siehe Release-Skill.'))
+console.log(dim('Nicht enthalten: Check 8 (Archive_Tar), 11 (Installation) und 14 (Upgrade).'))
+console.log(dim(`Die prueft nc-install-check ${tarball} in Wegwerf-Containern.`))
 console.log('')
 
 if (befunde.length) {
