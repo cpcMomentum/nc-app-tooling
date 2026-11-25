@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { alleSeiten, auswerten, gueltig, kommentar, letzteMessung } from '../.github/scripts/verbreitung.mjs'
+import { alleSeiten, auswerten, gueltig, kommentar, letzteMessung, tagBerlin } from '../.github/scripts/verbreitung.mjs'
 
 const HEUTE = new Date('2026-11-11T08:00:00Z')
 const release = (tag, datum, downloads, mehr = {}) => ({
@@ -134,4 +134,16 @@ test('letzteMessung nimmt den juengsten Kommentar mit Messung und uebergeht alle
 	const kommentare = [alt, 'Handkommentar', neu, '<!-- verbreitung-messung: {kaputt -->', null].map((body) => ({ ...VON_UNS, body }))
 	assert.equal(letzteMessung(kommentare).datum, '2027-01-01')
 	assert.equal(letzteMessung([{ ...VON_UNS, body: 'nichts' }]), null)
+})
+
+test('Datum in deutscher Zeit: spaet abends nach UTC ist in Berlin schon der naechste Tag', () => {
+	assert.equal(tagBerlin(new Date('2026-11-24T23:30:00Z')), '2026-11-25')
+	assert.equal(tagBerlin('2026-06-30T22:30:00Z'), '2026-07-01')
+	assert.equal(tagBerlin('2026-11-25T10:00:00Z'), '2026-11-25')
+	const m = auswerten([{ ...release('v1', '2026-09-30', 7), published_at: '2026-09-30T22:15:00Z' }], HEUTE)
+	assert.equal(m.ausgerollt.datum, '2026-10-01')
+})
+
+test('Lesart behauptet nicht mehr, projektwerk fehle im App Store', () => {
+	assert.doesNotMatch(kommentar(messung('2027-01-01', 5, 'v1', 5), null), /nicht im App Store/)
 })

@@ -25,6 +25,9 @@ const MESS_ISSUE = process.env.VERBREITUNG_ISSUE ?? '19'
 const AUSGEROLLT_TAGE = 21
 const MARKE = 'verbreitung-messung:'
 
+/** Kalendertag in deutscher Zeit als JJJJ-MM-TT; toISOString zaehlt nach UTC und liegt nachts einen Tag daneben. */
+export const tagBerlin = (zeit) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date(zeit))
+
 const tarballSumme = (release) => (release.assets ?? [])
 	.filter((a) => a.name.endsWith('.tar.gz'))
 	.reduce((summe, a) => summe + a.download_count, 0)
@@ -40,7 +43,7 @@ export function auswerten(releases, heute) {
 		gesamt: echte.reduce((summe, r) => summe + tarballSumme(r), 0),
 		releases: echte.length,
 		ausgerollt: ausgerollt
-			? { tag: ausgerollt.tag_name, datum: ausgerollt.published_at.slice(0, 10), downloads: tarballSumme(ausgerollt) }
+			? { tag: ausgerollt.tag_name, datum: tagBerlin(ausgerollt.published_at), downloads: tarballSumme(ausgerollt) }
 			: null,
 	}
 }
@@ -71,7 +74,7 @@ export function kommentar(messung, vorher) {
 		'',
 		bezug,
 		'',
-		'**Lesart:** „Downloads gesamt" sind Installationen, Updates und Abrufe des App Stores zusammen, nicht die Zahl der Instanzen. Die Näherung für Instanzen ist die Spalte „dessen Downloads". projektwerk liegt nicht im App Store.',
+		'**Lesart:** „Downloads gesamt" sind Installationen, Updates und Abrufe des App Stores zusammen, nicht die Zahl der Instanzen. Die Näherung für Instanzen ist die Spalte „dessen Downloads".',
 		'',
 		`<!-- ${MARKE} ${JSON.stringify(messung)} -->`,
 	].join('\n')
@@ -139,7 +142,7 @@ export async function alleSeiten(pfad, hole = github) {
 
 async function main() {
 	const heute = new Date()
-	const messung = { datum: heute.toISOString().slice(0, 10), apps: {} }
+	const messung = { datum: tagBerlin(heute), apps: {} }
 	for (const app of APPS) messung.apps[app] = auswerten(await alleSeiten(`repos/${ORG}/${app}/releases`), heute)
 
 	const vorher = letzteMessung(await alleSeiten(`repos/${MESS_REPO}/issues/${MESS_ISSUE}/comments`))
